@@ -1,0 +1,61 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /backend
+      - /agent
+      - /worker
+      - /telegram-bot
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    # Routine version upgrades are performed manually after compatibility tests.
+    open-pull-requests-limit: 0
+    groups:
+      python-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(python)
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    # Routine version upgrades are performed manually after compatibility tests.
+    open-pull-requests-limit: 0
+    groups:
+      frontend-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(frontend)
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /backend
+      - /frontend
+      - /agent
+      - /worker
+      - /telegram-bot
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    # Base-image upgrades are reviewed and tested manually.
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    # Actions upgrades can change the runner runtime and are reviewed manually.
+    open-pull-requests-limit: 0

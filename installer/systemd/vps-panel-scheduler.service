@@ -1,0 +1,27 @@
+[Unit]
+Description=NectarinePanel Celery scheduler
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@PANEL_USER@
+Group=@PANEL_USER@
+WorkingDirectory=@INSTALL_DIR@/worker
+EnvironmentFile=@CONFIG_DIR@/panel.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@INSTALL_DIR@/backend:@INSTALL_DIR@/worker
+ExecStart=@INSTALL_DIR@/.venv/bin/celery -A nectarine_worker.celery_app beat --loglevel=INFO --schedule=@STORAGE_ROOT@/state/celerybeat-schedule
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@STORAGE_ROOT@
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

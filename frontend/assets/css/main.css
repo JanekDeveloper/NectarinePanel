@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --surface-base: #111214;
+  --surface-raised: #181a1d;
+  --surface-subtle: #202226;
+  --border: #303238;
+  --text: #f4f4f5;
+  --text-muted: #a2a5ab;
+  --accent: #f46a32;
+  --accent-hover: #ff7b43;
+  --success: #35a86b;
+  --warning: #d99a37;
+  --danger: #dc5b63;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--surface-base);
+  font-family:
+    "IBM Plex Sans",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--surface-base);
+  color: var(--text);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgb(244 106 50 / 35%);
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.control {
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-base);
+  padding: 0.65rem 0.8rem;
+  color: var(--text);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.control:hover {
+  border-color: #494c53;
+}
+
+.control:focus {
+  border-color: var(--accent);
+}
+
+.button-primary,
+.button-secondary,
+.button-danger {
+  display: inline-flex;
+  min-height: 44px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  font-weight: 650;
+  white-space: nowrap;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    transform 120ms ease;
+}
+
+.button-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #1a0d08;
+}
+
+.button-primary:hover {
+  background: var(--accent-hover);
+}
+
+.button-secondary {
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+.button-secondary:hover {
+  border-color: #4a4d54;
+  background: #27292e;
+}
+
+.button-danger {
+  border: 1px solid #77363b;
+  background: #3c2023;
+  color: #ffdadd;
+}
+
+.button-primary:active,
+.button-secondary:active,
+.button-danger:active {
+  transform: scale(0.98);
+}
+
+.button-primary:disabled,
+.button-secondary:disabled,
+.button-danger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

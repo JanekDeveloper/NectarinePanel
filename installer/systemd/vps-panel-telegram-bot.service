@@ -1,0 +1,26 @@
+[Unit]
+Description=NectarinePanel Telegram bot
+After=network-online.target vps-panel-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@PANEL_USER@
+Group=@PANEL_USER@
+WorkingDirectory=@INSTALL_DIR@/telegram-bot
+EnvironmentFile=@CONFIG_DIR@/panel.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@INSTALL_DIR@/telegram-bot
+ExecStart=@INSTALL_DIR@/.venv/bin/python -m nectarine_bot.main
+Restart=always
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
