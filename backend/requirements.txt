@@ -9,7 +9,7 @@ asyncmy>=0.2.10,<0.3
 aiosqlite==0.21.0
 PyJWT==2.10.1
 pwdlib[argon2]==0.2.1
-cryptography==45.0.3
+cryptography==49.0.0
 httpx==0.28.1
 websockets>=16.0,<17
 python-multipart==0.0.20
