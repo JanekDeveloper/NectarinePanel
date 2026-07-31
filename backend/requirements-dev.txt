@@ -3,7 +3,7 @@
 -r ../worker/requirements.txt
 -r ../telegram-bot/requirements.txt
 pytest>=9.1,<10
-pytest-asyncio>=1.3,<2
+pytest-asyncio>=1.4.0,<2
 pytest-cov>=7,<8
 ruff>=0.14,<0.15
 mypy>=1.19,<2
