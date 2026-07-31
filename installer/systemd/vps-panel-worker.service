@@ -1,0 +1,29 @@
+[Unit]
+Description=NectarinePanel Celery worker
+After=network-online.target postgresql.service redis-server.service vps-panel-agent.service
+Wants=network-online.target
+Requires=vps-panel-agent.service
+
+[Service]
+Type=simple
+User=@PANEL_USER@
+Group=@PANEL_USER@
+WorkingDirectory=@INSTALL_DIR@/worker
+EnvironmentFile=@CONFIG_DIR@/panel.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@INSTALL_DIR@/backend:@INSTALL_DIR@/worker
+ExecStart=@INSTALL_DIR@/.venv/bin/celery -A nectarine_worker.celery_app worker --loglevel=INFO --concurrency=2
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@STORAGE_ROOT@
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

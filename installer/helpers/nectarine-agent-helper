@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+set -a
+# shellcheck disable=SC1091
+. /etc/nectarine-panel/agent.env
+set +a
+export PYTHONPATH=@INSTALL_DIR@/agent
+
+exec @INSTALL_DIR@/.venv/bin/python \
+    -m system_agent.privileged_helper "$@"

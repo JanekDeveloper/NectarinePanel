@@ -1,0 +1,33 @@
+[Unit]
+Description=NectarinePanel allowlisted system agent
+After=network-online.target docker.service nginx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@AGENT_USER@
+Group=@AGENT_USER@
+WorkingDirectory=@INSTALL_DIR@/agent
+EnvironmentFile=@CONFIG_DIR@/agent.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@INSTALL_DIR@/agent
+ExecStart=@INSTALL_DIR@/.venv/bin/uvicorn system_agent.main:app --host 127.0.0.1 --port @AGENT_PORT@ --no-access-log
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0027
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=@STORAGE_ROOT@ /etc /var/lib/vps-panel -/var/lib/letsencrypt -/var/log/letsencrypt
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
