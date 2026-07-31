@@ -32,7 +32,7 @@
     "@nuxt/test-utils": "4.1.0",
     "@vue/test-utils": "2.4.11",
     "eslint": "10.8.0",
-    "happy-dom": "20.10.6",
+    "happy-dom": "20.11.1",
     "prettier": "3.5.3",
     "typescript": "6.0.3",
     "vitest": "4.1.9",
