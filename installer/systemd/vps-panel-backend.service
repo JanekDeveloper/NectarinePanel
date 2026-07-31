@@ -1,0 +1,29 @@
+[Unit]
+Description=NectarinePanel FastAPI backend
+After=network-online.target postgresql.service redis-server.service vps-panel-agent.service
+Wants=network-online.target
+Requires=vps-panel-agent.service
+
+[Service]
+Type=simple
+User=@PANEL_USER@
+Group=@PANEL_USER@
+WorkingDirectory=@INSTALL_DIR@/backend
+EnvironmentFile=@CONFIG_DIR@/panel.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=@INSTALL_DIR@/backend
+ExecStart=@INSTALL_DIR@/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port @BACKEND_PORT@ --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@STORAGE_ROOT@
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

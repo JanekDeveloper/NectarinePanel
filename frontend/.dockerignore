@@ -1,0 +1,7 @@
+.env
+.env.*
+.nuxt
+.output
+node_modules
+tests
+*.log

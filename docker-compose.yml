@@ -1,0 +1,156 @@
+name: nectarine-panel
+
+x-panel-environment: &panel-environment
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://nectarine:nectarine@postgres:5432/nectarine}
+  REDIS_URL: ${REDIS_URL:-redis://valkey:6379/0}
+  JWT_SECRET: ${JWT_SECRET:-development-only-change-me}
+  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-}
+  AGENT_URL: ${AGENT_URL:-http://agent:8090}
+  AGENT_TOKEN: ${AGENT_TOKEN:-development-agent-token}
+  PUBLIC_IP: ${PUBLIC_IP:-}
+  LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
+  STORAGE_ROOT: ${STORAGE_ROOT:-/srv/vps-panel}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID:-}
+  TELEGRAM_API_TOKEN: ${TELEGRAM_API_TOKEN:-development-telegram-service-token}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nectarine
+      POSTGRES_USER: nectarine
+      POSTGRES_PASSWORD: nectarine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nectarine"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: valkey-server --save 60 1 --loglevel warning
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment: *panel-environment
+    volumes:
+      - ./backend:/app/backend
+      - panel-storage:/srv/vps-panel
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [internal, public]
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    environment:
+      NUXT_PUBLIC_API_BASE: http://localhost:8000/api/v1
+      NUXT_PUBLIC_WS_BASE: ws://localhost:8000
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on: [backend]
+    networks: [public]
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment: *panel-environment
+    volumes:
+      - ./backend:/app/backend
+      - ./worker:/app/worker
+      - panel-storage:/srv/vps-panel
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [internal]
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    command: ["celery", "-A", "nectarine_worker.celery_app", "beat", "--loglevel=INFO"]
+    environment: *panel-environment
+    volumes:
+      - ./backend:/app/backend
+      - ./worker:/app/worker
+      - panel-storage:/srv/vps-panel
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [internal]
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: telegram-bot/Dockerfile
+    environment: *panel-environment
+    volumes:
+      - ./telegram-bot:/app/telegram-bot
+    depends_on: [backend, valkey]
+    networks: [internal]
+    profiles: [telegram]
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    environment: *panel-environment
+    volumes:
+      - ./agent:/app/agent
+      - panel-storage:/srv/vps-panel
+      - ./deploy/nginx:/etc/nginx/vps-panel:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-998}"
+    expose: ["8090"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    networks: [internal]
+
+  adminer:
+    image: adminer:5.4.2-standalone
+    expose: ["8080"]
+    volumes:
+      - panel-storage:/srv/vps-panel
+    depends_on: [postgres]
+    networks: [internal]
+    profiles: [adminer]
+
+networks:
+  internal:
+    internal: true
+  public:
+
+volumes:
+  postgres-data:
+  valkey-data:
+  panel-storage:

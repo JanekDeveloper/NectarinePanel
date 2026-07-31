@@ -1,0 +1,46 @@
+{
+  "name": "@nectarine-panel/frontend",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "lint": "nuxt prepare && eslint .",
+    "format": "prettier --write \"app.vue\" \"assets/**/*.css\" \"components/**/*.vue\" \"composables/**/*.ts\" \"layouts/**/*.vue\" \"middleware/**/*.ts\" \"pages/**/*.vue\" \"stores/**/*.ts\" \"tests/**/*.ts\" \"types/**/*.ts\" \"*.config.*\" \"package.json\" \"tsconfig.json\"",
+    "test": "vitest run",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "@pinia/nuxt": "0.11.3",
+    "@tabler/icons-vue": "3.34.0",
+    "@tailwindcss/vite": "4.3.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "nuxt": "4.5.1",
+    "pinia": "3.0.4",
+    "tailwindcss": "4.3.1",
+    "vue": "3.5.40",
+    "vue-router": "5.2.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "1.16.0",
+    "@nuxt/test-utils": "4.1.0",
+    "@vue/test-utils": "2.4.11",
+    "eslint": "10.8.0",
+    "happy-dom": "20.10.6",
+    "prettier": "3.5.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.9",
+    "vue-tsc": "3.3.5"
+  },
+  "overrides": {
+    "glob": "13.0.6",
+    "js-beautify": "2.0.3",
+    "readdir-glob": "3.0.0"
+  }
+}

@@ -1,0 +1,94 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /backend
+      - /agent
+      - /worker
+      - /telegram-bot
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 1
+    groups:
+      python-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      python-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+    commit-message:
+      prefix: deps(python)
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 1
+    groups:
+      frontend-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      frontend-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+    commit-message:
+      prefix: deps(frontend)
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /backend
+      - /frontend
+      - /agent
+      - /worker
+      - /telegram-bot
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    # Base-image upgrades are reviewed and tested manually.
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      time: "04:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 1
+    groups:
+      actions-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+    commit-message:
+      prefix: deps(actions)
