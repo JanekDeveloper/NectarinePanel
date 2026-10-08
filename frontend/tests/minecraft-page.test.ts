@@ -3,7 +3,11 @@ import { flushPromises, type VueWrapper } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MinecraftPage from "../pages/projects/[id]/minecraft.vue";
 
-const state = vi.hoisted(() => ({ writable: true, request: vi.fn() }));
+const state = vi.hoisted(() => ({
+  writable: true,
+  configured: true,
+  request: vi.fn(),
+}));
 mockNuxtImport("useApi", () => () => ({ request: state.request }));
 mockNuxtImport("useAuthStore", () => () => ({
   canWriteProjects: state.writable,
@@ -16,6 +20,7 @@ describe("Minecraft management page", () => {
   let wrapper: VueWrapper | undefined;
   beforeEach(() => {
     state.writable = true;
+    state.configured = true;
     state.request.mockReset();
     state.request.mockImplementation(
       async (path: string, options?: { method?: string }) => {
@@ -30,7 +35,7 @@ describe("Minecraft management page", () => {
             configuration: {
               server_jar: "server.jar",
               java_version: 21,
-              eula_accepted: false,
+              eula_accepted: state.configured,
               rcon_enabled: true,
             },
             rcon_configured: true,
@@ -76,6 +81,26 @@ describe("Minecraft management page", () => {
   afterEach(() => {
     wrapper?.unmount();
     wrapper = undefined;
+  });
+  it("requires saved EULA acceptance before installing or starting a new server", async () => {
+    state.configured = false;
+    wrapper = await mountSuspended(MinecraftPage, {
+      route: "/projects/test/minecraft",
+    });
+    await flushPromises();
+    expect(
+      wrapper.find("form.installer button[type=submit]").attributes("disabled"),
+    ).toBeDefined();
+    const eula = wrapper.find("label.critical input[type=checkbox]");
+    await eula.setValue(true);
+    expect(
+      wrapper.find("form.installer button[type=submit]").attributes("disabled"),
+    ).toBeDefined();
+    await wrapper.find("form.installer").trigger("submit");
+    expect(state.request).not.toHaveBeenCalledWith(
+      "/projects/test/minecraft/install",
+      expect.anything(),
+    );
   });
   it("selects an official build and queues the installation with visible progress", async () => {
     wrapper = await mountSuspended(MinecraftPage, {

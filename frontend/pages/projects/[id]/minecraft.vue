@@ -162,6 +162,12 @@ const installActive = computed(
     (installJob.value !== null &&
       !["success", "failure", "revoked"].includes(installJob.value.status)),
 );
+const installationConfigured = computed(
+  () =>
+    isForge.value ||
+    (data.value?.configuration.eula_accepted === true &&
+      (!data.value.configuration.rcon_enabled || data.value.rcon_configured)),
+);
 
 watchEffect(() => {
   const firstVersion = minecraftVersions.value.at(0);
@@ -331,7 +337,12 @@ async function retryRecovery(): Promise<void> {
 
 /** Queue an official server install or a backed-up update. */
 async function installForge(): Promise<void> {
-  if (!selectedMinecraftVersion.value || !selectedForgeVersion.value) return;
+  if (
+    !installationConfigured.value ||
+    !selectedMinecraftVersion.value ||
+    !selectedForgeVersion.value
+  )
+    return;
   if (
     !isForge.value &&
     installed.value &&
@@ -461,7 +472,12 @@ function selectServerJar(event: Event): void {
 
 /** Import a server JAR through the existing bounded file upload service. */
 async function importServer(): Promise<void> {
-  if (!uploadedServerFile.value || !selectedMinecraftVersion.value) return;
+  if (
+    !installationConfigured.value ||
+    !uploadedServerFile.value ||
+    !selectedMinecraftVersion.value
+  )
+    return;
   if (installed.value && !window.confirm(manageCopy.value.updateConfirm))
     return;
   pending.value = true;
@@ -497,7 +513,13 @@ async function importServer(): Promise<void> {
     <button
       class="button-primary"
       type="button"
-      :disabled="pending || installActive || !canWrite || !form.eula_accepted"
+      :disabled="
+        pending ||
+        installActive ||
+        !canWrite ||
+        !form.eula_accepted ||
+        (!isForge && !installed)
+      "
       @click="start"
     >
       <IconPlayerPlay :size="18" /> {{ copy.start }}
@@ -598,6 +620,9 @@ async function importServer(): Promise<void> {
     </button>
   </form>
   <form class="installer panel" @submit.prevent="installForge">
+    <p v-if="!installationConfigured" role="status">
+      {{ manageCopy.configurationRequired }}
+    </p>
     <div class="installer__heading">
       <strong>{{ copy.installTitle }}</strong>
       <p>{{ copy.installDescription }}</p>
@@ -672,6 +697,7 @@ async function importServer(): Promise<void> {
         :disabled="
           pending ||
           installActive ||
+          !installationConfigured ||
           !canWrite ||
           !selectedMinecraftVersion ||
           !selectedForgeVersion
@@ -721,6 +747,7 @@ async function importServer(): Promise<void> {
         installActive ||
         !canWrite ||
         !uploadedServerFile ||
+        !installationConfigured ||
         !selectedMinecraftVersion
       "
     >

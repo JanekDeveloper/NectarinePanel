@@ -41,6 +41,7 @@ from app.services.minecraft import (
     RCON_ENV_KEY,
     MinecraftCatalogError,
     forge_version_catalog,
+    minecraft_parameters,
     recommended_java_version,
     start_minecraft_runtime,
 )
@@ -604,6 +605,17 @@ async def _queue_plugin_server_install(
         raise HTTPException(status_code=422, detail="Declare the server's Minecraft version")
     await assert_minecraft_idle(session, project)
     installed = bool(project.runtime_config.get("sha256"))
+    if project.runtime_config.get("eula_accepted") is not True:
+        raise HTTPException(
+            status_code=422,
+            detail="Accept the Minecraft EULA and save configuration before installation",
+        )
+    try:
+        await minecraft_parameters(project, session, settings)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Save valid Minecraft launch and RCON settings first"
+        ) from exc
     root = runtime_root(settings.storage_root, project)
     if updating != installed:
         raise HTTPException(

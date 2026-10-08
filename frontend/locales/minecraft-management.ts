@@ -1,6 +1,8 @@
 import type { PanelLocale } from "~/locales/messages";
 
 const en = {
+  configurationRequired:
+    "Accept the Minecraft EULA and save the server settings before installation.",
   recovery: "Retry recovery",
   build: "Build",
   update: "Update with backup",
@@ -42,6 +44,8 @@ const en = {
   emptyPlugins: "No plugin JARs found.",
 };
 const ru: typeof en = {
+  configurationRequired:
+    "Примите EULA Minecraft и сохраните настройки сервера перед установкой.",
   recovery: "Повторить восстановление",
   build: "Сборка",
   update: "Обновить с бэкапом",
@@ -81,6 +85,8 @@ const ru: typeof en = {
   emptyPlugins: "JAR-плагины не найдены.",
 };
 const uk: typeof en = {
+  configurationRequired:
+    "Прийміть EULA Minecraft і збережіть налаштування сервера перед встановленням.",
   recovery: "Повторити відновлення",
   build: "Збірка",
   update: "Оновити з бекапом",
@@ -120,6 +126,8 @@ const uk: typeof en = {
   emptyPlugins: "JAR-плагіни не знайдені.",
 };
 const pl: typeof en = {
+  configurationRequired:
+    "Zaakceptuj EULA Minecraft i zapisz ustawienia serwera przed instalacją.",
   recovery: "Ponów odzyskiwanie",
   build: "Kompilacja",
   update: "Aktualizuj z kopią",

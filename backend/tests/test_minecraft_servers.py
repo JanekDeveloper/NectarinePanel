@@ -10,7 +10,12 @@ from app.services.minecraft_catalogs import java_for_engine
 from fastapi.testclient import TestClient
 
 
-def create_server(client: TestClient, headers: dict[str, str], engine: str = "paper") -> str:
+def create_server(
+    client: TestClient,
+    headers: dict[str, str],
+    engine: str = "paper",
+    configuration: dict[str, Any] | None = None,
+) -> str:
     """Create an isolated plugin server through the real project API."""
     response = client.post(
         "/api/v1/projects",
@@ -19,10 +24,45 @@ def create_server(client: TestClient, headers: dict[str, str], engine: str = "pa
             "name": f"Test {engine}",
             "project_type": f"minecraft_{engine}",
             "runtime_type": f"minecraft_{engine}",
+            "runtime_config": configuration or {},
         },
     )
     assert response.status_code == 201
     return str(response.json()["id"])
+
+
+@pytest.mark.parametrize("engine", ["paper", "purpur", "spigot"])
+@pytest.mark.parametrize(
+    "configuration",
+    [{}, {"eula_accepted": False}, {"eula_accepted": True, "rcon_enabled": True}],
+)
+def test_install_requires_saved_launch_configuration(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    engine: str,
+    configuration: dict[str, Any],
+) -> None:
+    """Unconfigured installs fail before downloading or reserving a worker job."""
+    project_id = create_server(client, auth_headers, engine, configuration)
+
+    async def unexpected_artifact(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Ensure failed preflight never requests an upstream artifact."""
+        raise AssertionError("Artifact resolution must follow configuration validation")
+
+    monkeypatch.setattr(minecraft, "resolve_artifact", unexpected_artifact)
+    result = client.post(
+        f"/api/v1/projects/{project_id}/minecraft/install",
+        headers=auth_headers,
+        json={"minecraft_version": "1.21.1", "build_id": "133"},
+    )
+    assert result.status_code == 422
+    assert (
+        client.get(f"/api/v1/projects/{project_id}/minecraft", headers=auth_headers).json()[
+            "active_job_id"
+        ]
+        is None
+    )
 
 
 @pytest.mark.parametrize("engine", ["paper", "purpur", "spigot"])
@@ -113,6 +153,14 @@ def test_install_reserves_all_mutation_paths(
     """One queued install excludes config, file, backup and duplicate installs."""
     project_id = create_server(client, auth_headers)
     queued = []
+    assert (
+        client.put(
+            f"/api/v1/projects/{project_id}/minecraft",
+            headers=auth_headers,
+            json={"eula_accepted": True, "server_jar": "server.jar", "rcon_enabled": False},
+        ).status_code
+        == 200
+    )
 
     async def artifact(engine: str, version: str, build: str) -> dict[str, Any]:
         """Return deterministic official metadata without a network dependency."""
@@ -285,6 +333,14 @@ def test_failed_enqueue_releases_reserved_server(
 ) -> None:
     """A broker outage leaves the project usable and persists a sanitized failure."""
     project_id = create_server(client, auth_headers)
+    assert (
+        client.put(
+            f"/api/v1/projects/{project_id}/minecraft",
+            headers=auth_headers,
+            json={"eula_accepted": True, "server_jar": "server.jar", "rcon_enabled": False},
+        ).status_code
+        == 200
+    )
     root = Path("/tmp/nectarine-panel-tests/minecraft") / project_id
     root.mkdir(parents=True)
     (root / "uploaded.jar").write_bytes(b"agent-validates-the-jar")
