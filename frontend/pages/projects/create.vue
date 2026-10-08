@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isMinecraftRuntime } from "~/utils/minecraft";
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -145,8 +146,16 @@ const currentStepMeta = computed(
 );
 const dockerRuntime = computed(() => form.runtime_type === "docker");
 const composeRuntime = computed(() => form.runtime_type === "docker_compose");
-const minecraftRuntime = computed(
-  () => form.runtime_type === "minecraft_forge",
+const minecraftRuntime = computed(() => isMinecraftRuntime(form.runtime_type));
+watch(
+  () => form.project_type,
+  (value) => {
+    if (isMinecraftRuntime(value) && value !== "minecraft_forge") {
+      form.runtime_type = value;
+      form.source_type = "files";
+      form.repository_url = "";
+    }
+  },
 );
 const hostBuildFieldsVisible = computed(
   () => !composeRuntime.value && !minecraftRuntime.value,
@@ -438,7 +447,7 @@ function requestErrorMessage(error: unknown): string {
  */
 function templateIcon(template: ProjectTemplate): Component {
   if (template.runtime_type === "docker_compose") return IconBrandDocker;
-  if (template.runtime_type === "minecraft_forge") return IconBox;
+  if (isMinecraftRuntime(template.runtime_type)) return IconBox;
   if (template.project_type === "bot") return IconCode;
   if (template.runtime_type === "static") return IconFiles;
   return IconServer;
@@ -477,6 +486,9 @@ function runtimeHint(runtimeType: string): string {
       pm2: copy.value.hintPm2,
       static: copy.value.hintStatic,
       minecraft_forge: copy.value.hintMinecraft,
+      minecraft_paper: copy.value.hintMinecraft,
+      minecraft_purpur: copy.value.hintMinecraft,
+      minecraft_spigot: copy.value.hintMinecraft,
     }[runtimeType] ?? copy.value.hintDefault
   );
 }
@@ -1030,6 +1042,9 @@ function projectTypeLabel(value: string): string {
                       <option value="docker">Docker</option>
                       <option value="static">{{ copy.staticSite }}</option>
                       <option value="minecraft_forge">Minecraft Forge</option>
+                      <option value="minecraft_paper">Minecraft Paper</option>
+                      <option value="minecraft_purpur">Minecraft Purpur</option>
+                      <option value="minecraft_spigot">Minecraft Spigot</option>
                     </select>
                   </label>
                   <label class="field">
@@ -1041,6 +1056,9 @@ function projectTypeLabel(value: string): string {
                       <option value="pm2">PM2</option>
                       <option value="static">Nginx static</option>
                       <option value="minecraft_forge">Minecraft Forge</option>
+                      <option value="minecraft_paper">Minecraft Paper</option>
+                      <option value="minecraft_purpur">Minecraft Purpur</option>
+                      <option value="minecraft_spigot">Minecraft Spigot</option>
                     </select>
                   </label>
                 </div>

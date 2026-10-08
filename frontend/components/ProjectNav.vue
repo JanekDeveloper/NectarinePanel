@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isMinecraftRuntime } from "~/utils/minecraft";
 import type { Project } from "~/types/api";
 
 const props = defineProps<{ projectId: string }>();
@@ -14,7 +15,7 @@ try {
 } catch {
   projectType.value = null;
 }
-const showMinecraft = computed(() => projectType.value === "minecraft_forge");
+const showMinecraft = computed(() => isMinecraftRuntime(projectType.value));
 
 const tabs = computed(() => [
   { label: t("project.nav.overview"), suffix: "" },

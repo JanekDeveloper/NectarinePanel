@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isMinecraftRuntime } from "~/utils/minecraft";
 import {
   IconActivity,
   IconArchive,
@@ -349,7 +350,7 @@ function violationText(resource: string): string {
           <IconArchive :size="19" :stroke-width="1.7" /> {{ copy.createBackup }}
         </NuxtLink>
         <NuxtLink
-          v-if="project.project_type === 'minecraft_forge'"
+          v-if="isMinecraftRuntime(project.project_type)"
           :to="`/projects/${project.id}/minecraft`"
         >
           <IconBrandDocker :size="19" :stroke-width="1.7" />

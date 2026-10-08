@@ -92,7 +92,17 @@ export interface HostMetrics {
   uptime_seconds: number;
 }
 
+export interface MinecraftStatus {
+  running?: boolean;
+  available: boolean;
+  online_players: number | null;
+  max_players: number | null;
+  motd?: unknown;
+  version?: string | null;
+}
+
 export interface ProjectMetricValues {
+  minecraft?: MinecraftStatus;
   runtime_type: string;
   status: string;
   disk_bytes: number;
@@ -301,4 +311,17 @@ export interface Notification {
   resource_id: string | null;
   read_at: string | null;
   created_at: string;
+}
+
+export interface MinecraftBuildOption {
+  build_id: string;
+  channel: "stable" | "release" | "unknown";
+  java_version: number;
+}
+
+export interface MinecraftPluginEntry {
+  name: string;
+  path: string;
+  size_bytes: number;
+  enabled: boolean;
 }

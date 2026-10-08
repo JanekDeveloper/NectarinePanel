@@ -230,6 +230,9 @@ export function projectTypeLabel(
       docker: "Docker",
       static: translateMessage(locale, "projects.staticSite"),
       minecraft_forge: "Minecraft Forge",
+      minecraft_paper: "Minecraft Paper",
+      minecraft_purpur: "Minecraft Purpur",
+      minecraft_spigot: "Minecraft Spigot",
     }[value] ?? value
   );
 }
@@ -246,6 +249,9 @@ export function runtimeTypeLabel(value: string): string {
       pm2: "PM2",
       static: "Nginx static",
       minecraft_forge: "Minecraft Forge",
+      minecraft_paper: "Minecraft Paper",
+      minecraft_purpur: "Minecraft Purpur",
+      minecraft_spigot: "Minecraft Spigot",
     }[value] ?? value
   );
 }

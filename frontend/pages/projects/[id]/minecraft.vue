@@ -2,16 +2,54 @@
 import { IconCheck, IconDownload, IconPlayerPlay } from "@tabler/icons-vue";
 import type {
   Job,
+  MinecraftBuildOption,
+  MinecraftPluginEntry,
+  MinecraftStatus,
+  ProjectMetricValues,
+  MetricSample,
   MinecraftVersionCatalog,
   MinecraftVersionOption,
 } from "~/types/api";
+import { minecraftManagementMessages } from "~/locales/minecraft-management";
+import {
+  minecraftConfigPaths,
+  minecraftInstallPayload,
+  minecraftMotd,
+} from "~/utils/minecraft";
 import { minecraftMessages } from "~/locales/minecraft";
 
 const route = useRoute();
 const projectId = String(route.params.id);
 const api = useApi();
 const { locale, t } = useLocale();
-const copy = computed(() => minecraftMessages[locale.value]);
+const copy = computed(
+  () =>
+    Object.fromEntries(
+      Object.entries(minecraftMessages[locale.value]).map(([key, value]) => [
+        key,
+        isForge.value ? value : value.replaceAll("Forge", coreName.value),
+      ]),
+    ) as typeof minecraftMessages.ru,
+);
+const manageCopy = computed(() => minecraftManagementMessages[locale.value]);
+const auth = useAuthStore();
+const canWrite = computed(() => auth.canWriteProjects);
+const builds = ref<MinecraftBuildOption[]>([]);
+const buildsPending = ref(false);
+const buildsError = ref(false);
+const uploadedServerFile = ref<File | null>(null);
+const playerForm = reactive({
+  action: "whitelist_add" as
+    | "whitelist_add"
+    | "whitelist_remove"
+    | "op"
+    | "deop"
+    | "ban"
+    | "pardon"
+    | "kick",
+  player: "",
+  reason: "",
+});
 const message = ref("");
 const pending = ref(false);
 const editorFile = ref("");
@@ -25,6 +63,8 @@ const form = reactive({
   java_version: 21,
   minecraft_version: null as string | null,
   forge_version: null as string | null,
+  build_id: null as string | null,
+  sha256: "",
   xms: "1G",
   xmx: "4G",
   server_jar: "forge-server.jar",
@@ -42,8 +82,47 @@ const { data, refresh: refreshConfig } = await useAsyncData(
     api.request<{
       configuration: Record<string, unknown>;
       rcon_configured: boolean;
+      engine: string;
+      status: string;
+      active_job_id: string | null;
     }>(`/projects/${projectId}/minecraft`),
 );
+const core = computed(() => data.value?.engine ?? "forge");
+const isForge = computed(() => core.value === "forge");
+const coreName = computed(
+  () => core.value.charAt(0).toUpperCase() + core.value.slice(1),
+);
+const configPaths = computed(() => minecraftConfigPaths(core.value));
+const installed = computed(() => Boolean(form.sha256));
+const serverRunning = computed(
+  () => status.value?.running ?? data.value?.status === "running",
+);
+const { data: metric, refresh: refreshMetric } = await useAsyncData(
+  `minecraft-status-${projectId}`,
+  async () => {
+    try {
+      return await api.request<MetricSample>(
+        `/monitoring/projects/${projectId}/latest`,
+        { silent: true },
+      );
+    } catch {
+      return null;
+    }
+  },
+);
+const status = computed<MinecraftStatus | undefined>(
+  () => (metric.value?.values as ProjectMetricValues | undefined)?.minecraft,
+);
+const { data: plugins, refresh: refreshPlugins } = await useAsyncData(
+  `minecraft-plugins-${projectId}`,
+  () =>
+    isForge.value
+      ? Promise.resolve([])
+      : api.request<MinecraftPluginEntry[]>(
+          `/projects/${projectId}/minecraft/plugins`,
+        ),
+);
+let metricsTimer: ReturnType<typeof setInterval> | null = null;
 const {
   data: versionCatalog,
   pending: versionsPending,
@@ -57,9 +136,11 @@ const {
 const { data: mods, refresh: refreshMods } = await useAsyncData(
   `minecraft-mods-${projectId}`,
   () =>
-    api.request<{ name: string; path: string; size_bytes: number }[]>(
-      `/projects/${projectId}/minecraft/mods`,
-    ),
+    !isForge.value
+      ? Promise.resolve([])
+      : api.request<{ name: string; path: string; size_bytes: number }[]>(
+          `/projects/${projectId}/minecraft/mods`,
+        ),
 );
 watchEffect(() => {
   if (data.value?.configuration) Object.assign(form, data.value.configuration);
@@ -70,13 +151,16 @@ const selectedVersion = computed<MinecraftVersionOption | undefined>(() =>
     (item) => item.minecraft_version === selectedMinecraftVersion.value,
   ),
 );
-const forgeVersions = computed(
-  () => selectedVersion.value?.forge_versions ?? [],
+const forgeVersions = computed(() =>
+  isForge.value
+    ? (selectedVersion.value?.forge_versions ?? [])
+    : builds.value.map((build) => build.build_id),
 );
 const installActive = computed(
   () =>
-    installJob.value !== null &&
-    !["success", "failure", "revoked"].includes(installJob.value.status),
+    Boolean(data.value?.active_job_id) ||
+    (installJob.value !== null &&
+      !["success", "failure", "revoked"].includes(installJob.value.status)),
 );
 
 watchEffect(() => {
@@ -92,7 +176,35 @@ watchEffect(() => {
 
 watch(
   selectedMinecraftVersion,
-  () => {
+  async () => {
+    if (!isForge.value) {
+      buildsPending.value = true;
+      buildsError.value = false;
+      builds.value = [];
+      selectedForgeVersion.value = "";
+      const version = selectedMinecraftVersion.value;
+      if (!version) {
+        buildsPending.value = false;
+        return;
+      }
+      try {
+        const result = await api.request<{ builds: MinecraftBuildOption[] }>(
+          `/projects/${projectId}/minecraft/versions/${version}/builds`,
+        );
+        if (version !== selectedMinecraftVersion.value) return;
+        builds.value = result.builds;
+        selectedForgeVersion.value =
+          form.minecraft_version === version &&
+          result.builds.some((build) => build.build_id === form.build_id)
+            ? String(form.build_id)
+            : (result.builds[0]?.build_id ?? "");
+      } catch {
+        buildsError.value = true;
+      } finally {
+        buildsPending.value = false;
+      }
+      return;
+    }
     const option = selectedVersion.value;
     if (!option) {
       selectedForgeVersion.value = "";
@@ -115,7 +227,25 @@ watch(
   { immediate: true },
 );
 
+watch(selectedForgeVersion, (value) => {
+  if (!isForge.value) {
+    const build = builds.value.find((item) => item.build_id === value);
+    if (build) form.java_version = build.java_version;
+  }
+});
+onMounted(() => {
+  metricsTimer = setInterval(() => {
+    void refreshMetric();
+  }, 15000);
+  if (data.value?.active_job_id) {
+    void api.request<Job>(`/jobs/${data.value.active_job_id}`).then((job) => {
+      installJob.value = job;
+      startInstallPolling();
+    });
+  }
+});
 onBeforeUnmount(() => {
+  if (metricsTimer) clearInterval(metricsTimer);
   if (installPollTimer) clearInterval(installPollTimer);
 });
 
@@ -148,6 +278,8 @@ async function start(): Promise<void> {
       method: "POST",
     });
     message.value = copy.value.started;
+    await refreshConfig();
+    await refreshMetric();
   } finally {
     pending.value = false;
   }
@@ -162,11 +294,13 @@ async function refreshInstallJob(): Promise<void> {
   if (job.status === "success") {
     message.value = copy.value.installed;
     await refreshConfig();
+    await refreshPlugins();
   } else if (["failure", "revoked"].includes(job.status)) {
     message.value = copy.value.installError.replace(
       "{error}",
       job.error ? `: ${job.error}` : "",
     );
+    await refreshConfig();
   } else {
     return;
   }
@@ -181,18 +315,40 @@ function startInstallPolling(): void {
   }, 1500);
 }
 
+/** Retry recovery while retaining the original operation reservation. */
+async function retryRecovery(): Promise<void> {
+  pending.value = true;
+  try {
+    installJob.value = await api.request<Job>(
+      `/projects/${projectId}/minecraft/recovery`,
+      { method: "POST" },
+    );
+    startInstallPolling();
+  } finally {
+    pending.value = false;
+  }
+}
+
+/** Queue an official server install or a backed-up update. */
 async function installForge(): Promise<void> {
   if (!selectedMinecraftVersion.value || !selectedForgeVersion.value) return;
+  if (
+    !isForge.value &&
+    installed.value &&
+    !window.confirm(manageCopy.value.updateConfirm)
+  )
+    return;
   pending.value = true;
   try {
     const result = await api.request<Job>(
-      `/projects/${projectId}/minecraft/install`,
+      `/projects/${projectId}/minecraft/${!isForge.value && installed.value ? "update" : "install"}`,
       {
         method: "POST",
-        body: {
-          minecraft_version: selectedMinecraftVersion.value,
-          forge_version: selectedForgeVersion.value,
-        },
+        body: minecraftInstallPayload(
+          core.value,
+          selectedMinecraftVersion.value,
+          selectedForgeVersion.value,
+        ),
       },
     );
     installJob.value = result;
@@ -227,17 +383,140 @@ function bytes(value: number): string {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
+/** Apply a shared runtime action and refresh server state. */
+async function control(action: "stop" | "restart"): Promise<void> {
+  pending.value = true;
+  try {
+    await api.request(`/projects/${projectId}/runtime/${action}`, {
+      method: "POST",
+    });
+    await refreshConfig();
+    await refreshMetric();
+  } finally {
+    pending.value = false;
+  }
+}
+
+/** Upload a plugin and refresh its stopped-server activation state. */
+async function uploadPlugin(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  pending.value = true;
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    await api.request(`/projects/${projectId}/minecraft/plugins`, {
+      method: "POST",
+      body,
+    });
+    await refreshPlugins();
+  } finally {
+    pending.value = false;
+    input.value = "";
+  }
+}
+
+/** Change only a plugin JAR, retaining its persistent data directory. */
+async function changePlugin(
+  plugin: MinecraftPluginEntry,
+  action: "enable" | "disable" | "delete",
+): Promise<void> {
+  if (action === "delete" && !window.confirm(manageCopy.value.deleteConfirm))
+    return;
+  pending.value = true;
+  try {
+    await api.request(
+      `/projects/${projectId}/minecraft/plugins/${encodeURIComponent(plugin.name)}`,
+      {
+        method: action === "delete" ? "DELETE" : "POST",
+        ...(action !== "delete" ? { body: { action } } : {}),
+      },
+    );
+    await refreshPlugins();
+  } finally {
+    pending.value = false;
+  }
+}
+
+/** Send a validated player administration command over private RCON. */
+async function managePlayer(): Promise<void> {
+  pending.value = true;
+  try {
+    const result = await api.request<{ message: string }>(
+      `/projects/${projectId}/minecraft/players/actions`,
+      { method: "POST", body: { ...playerForm } },
+    );
+    message.value = result.message;
+  } finally {
+    pending.value = false;
+  }
+}
+
+/** Select a browser-uploaded server artifact. */
+function selectServerJar(event: Event): void {
+  uploadedServerFile.value =
+    (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+/** Import a server JAR through the existing bounded file upload service. */
+async function importServer(): Promise<void> {
+  if (!uploadedServerFile.value || !selectedMinecraftVersion.value) return;
+  if (installed.value && !window.confirm(manageCopy.value.updateConfirm))
+    return;
+  pending.value = true;
+  try {
+    const name = `${core.value}-upload-${Date.now()}.jar`;
+    const body = new FormData();
+    body.append("file", uploadedServerFile.value);
+    await api.request(
+      `/projects/${projectId}/files/upload?path=${encodeURIComponent(name)}`,
+      { method: "POST", body },
+    );
+    installJob.value = await api.request<Job>(
+      `/projects/${projectId}/minecraft/${installed.value ? "update" : "install"}`,
+      {
+        method: "POST",
+        body: minecraftInstallPayload(
+          core.value,
+          selectedMinecraftVersion.value,
+          "",
+          name,
+        ),
+      },
+    );
+    startInstallPolling();
+  } finally {
+    pending.value = false;
+  }
+}
 </script>
 
 <template>
-  <PageHeader title="Minecraft Forge" :description="copy.description">
+  <PageHeader :title="`Minecraft ${coreName}`" :description="copy.description">
     <button
       class="button-primary"
       type="button"
-      :disabled="pending || !form.eula_accepted"
+      :disabled="pending || installActive || !canWrite || !form.eula_accepted"
       @click="start"
     >
       <IconPlayerPlay :size="18" /> {{ copy.start }}
+    </button>
+    <button
+      class="button-secondary"
+      type="button"
+      :disabled="pending || installActive || !canWrite"
+      @click="control('stop')"
+    >
+      {{ manageCopy.stop }}
+    </button>
+    <button
+      class="button-secondary"
+      type="button"
+      :disabled="pending || installActive || !canWrite"
+      @click="control('restart')"
+    >
+      {{ manageCopy.restart }}
     </button>
   </PageHeader>
   <ProjectNav :project-id="projectId" />
@@ -268,7 +547,11 @@ function bytes(value: number): string {
     /></label>
     <label
       >{{ copy.serverJar
-      }}<input v-model="form.server_jar" class="control" required
+      }}<input
+        v-model="form.server_jar"
+        class="control"
+        :readonly="!isForge"
+        required
     /></label>
     <label
       >{{ copy.gamePort
@@ -306,7 +589,11 @@ function bytes(value: number): string {
       ><input v-model="form.eula_accepted" type="checkbox" required />
       {{ copy.acceptEula }}</label
     >
-    <button class="button-primary" type="submit" :disabled="pending">
+    <button
+      class="button-primary"
+      type="submit"
+      :disabled="pending || installActive || !canWrite"
+    >
       {{ copy.saveConfiguration }}
     </button>
   </form>
@@ -315,14 +602,14 @@ function bytes(value: number): string {
       <strong>{{ copy.installTitle }}</strong>
       <p>{{ copy.installDescription }}</p>
       <span
-        v-if="form.minecraft_version && form.forge_version"
+        v-if="form.minecraft_version && (form.forge_version || form.build_id)"
         class="installed-version"
       >
         <IconCheck :size="16" :stroke-width="2" />
         {{
           copy.installedVersion
             .replace("{minecraft}", form.minecraft_version)
-            .replace("{forge}", form.forge_version)
+            .replace("{forge}", form.forge_version ?? form.build_id ?? "")
         }}
       </span>
     </div>
@@ -344,12 +631,12 @@ function bytes(value: number): string {
       </select>
     </label>
     <label
-      >Forge
+      >{{ isForge ? "Forge" : manageCopy.build }}
       <select
         v-model="selectedForgeVersion"
         class="control"
         required
-        :disabled="!forgeVersions.length || installActive"
+        :disabled="!forgeVersions.length || buildsPending || installActive"
       >
         <option
           v-for="version in forgeVersions"
@@ -360,6 +647,16 @@ function bytes(value: number): string {
         </option>
       </select>
     </label>
+    <p
+      v-if="
+        !isForge &&
+        builds.find((item) => item.build_id === selectedForgeVersion)
+          ?.channel === 'unknown'
+      "
+      class="hint"
+    >
+      {{ manageCopy.unknownChannel }}
+    </p>
     <div class="installer__action">
       <span v-if="selectedVersion">
         {{
@@ -375,12 +672,19 @@ function bytes(value: number): string {
         :disabled="
           pending ||
           installActive ||
+          !canWrite ||
           !selectedMinecraftVersion ||
           !selectedForgeVersion
         "
       >
         <IconDownload :size="18" :stroke-width="1.8" />
-        {{ installActive ? copy.installing : copy.installForge }}
+        {{
+          installActive
+            ? copy.installing
+            : !isForge && installed
+              ? manageCopy.update
+              : copy.installForge
+        }}
       </button>
     </div>
     <div v-if="installJob" class="install-progress" aria-live="polite">
@@ -390,7 +694,7 @@ function bytes(value: number): string {
       </div>
       <progress :value="installJob.progress" max="100" />
     </div>
-    <div v-if="versionsError" class="catalog-error" role="alert">
+    <div v-if="versionsError || buildsError" class="catalog-error" role="alert">
       <span>{{ copy.catalogError }}</span>
       <button type="button" @click="() => refreshVersions()">
         {{ t("projects.retry") }}
@@ -400,19 +704,66 @@ function bytes(value: number): string {
       {{ copy.catalogLoading }}
     </div>
   </form>
+  <form v-if="!isForge" class="panel config" @submit.prevent="importServer">
+    <h2>{{ manageCopy.importJar }}</h2>
+    <p class="hint">{{ manageCopy.importHint }}</p>
+    <input
+      type="file"
+      accept=".jar"
+      :disabled="pending || installActive || !canWrite || serverRunning"
+      @change="selectServerJar"
+    />
+    <button
+      class="button-primary"
+      type="submit"
+      :disabled="
+        pending ||
+        installActive ||
+        !canWrite ||
+        !uploadedServerFile ||
+        !selectedMinecraftVersion
+      "
+    >
+      {{ manageCopy.upload }}
+    </button>
+  </form>
+  <section v-if="!isForge" class="panel config">
+    <strong
+      >{{ manageCopy.players }}: {{ status?.online_players ?? "—" }} /
+      {{ status?.max_players ?? "—" }}</strong
+    >
+    <span>{{
+      status?.available ? manageCopy.available : manageCopy.unavailable
+    }}</span>
+    <span>{{ status?.version }}</span>
+    <span v-if="status?.motd">MOTD: {{ minecraftMotd(status.motd) }}</span>
+    <span v-if="installed"
+      >{{ manageCopy.installed }}: {{ form.minecraft_version }} /
+      {{ form.build_id ?? "JAR" }}</span
+    >
+  </section>
   <p v-if="message" class="message" aria-live="polite">{{ message }}</p>
+  <button
+    v-if="data?.active_job_id && installJob?.status === 'failure'"
+    type="button"
+    :disabled="pending || !canWrite"
+    @click="retryRecovery"
+  >
+    {{ manageCopy.recovery }}
+  </button>
   <section class="tools">
     <div class="panel editors">
       <h2>{{ copy.serverConfigs }}</h2>
-      <button type="button" @click="openEditor('server.properties')">
-        server.properties
+      <button
+        v-for="file in configPaths"
+        :key="file"
+        type="button"
+        @click="openEditor(file)"
+      >
+        {{ file }}
       </button>
-      <button type="button" @click="openEditor('whitelist.json')">
-        whitelist.json
-      </button>
-      <button type="button" @click="openEditor('ops.json')">ops.json</button>
     </div>
-    <div class="panel mods">
+    <div v-if="isForge" class="panel mods">
       <div class="mods-header">
         <h2>{{ copy.mods }}</h2>
         <button type="button" @click="() => refreshMods()">
@@ -430,6 +781,89 @@ function bytes(value: number): string {
       </p>
     </div>
   </section>
+  <section v-if="!isForge" class="panel mods management-panel">
+    <div class="mods-header">
+      <h2>{{ manageCopy.plugins }}</h2>
+      <button type="button" @click="() => refreshPlugins()">
+        {{ t("common.refresh") }}
+      </button>
+    </div>
+    <p class="hint">{{ manageCopy.pluginHint }}</p>
+    <input
+      type="file"
+      accept=".jar"
+      :disabled="pending || installActive || !canWrite || serverRunning"
+      @change="uploadPlugin"
+    />
+    <ul v-if="plugins?.length">
+      <li v-for="plugin in plugins" :key="plugin.path">
+        <span
+          >{{ plugin.name }} ·
+          {{ plugin.enabled ? manageCopy.enabled : manageCopy.disabled }}</span
+        ><code>{{ bytes(plugin.size_bytes) }}</code
+        ><button
+          type="button"
+          :disabled="pending || installActive || !canWrite || serverRunning"
+          @click="changePlugin(plugin, plugin.enabled ? 'disable' : 'enable')"
+        >
+          {{ plugin.enabled ? manageCopy.disable : manageCopy.enable }}</button
+        ><button
+          type="button"
+          :disabled="pending || installActive || !canWrite || serverRunning"
+          @click="changePlugin(plugin, 'delete')"
+        >
+          {{ manageCopy.remove }}
+        </button>
+      </li>
+    </ul>
+    <p v-else>{{ manageCopy.emptyPlugins }}</p>
+  </section>
+  <form v-if="!isForge" class="panel config" @submit.prevent="managePlayer">
+    <h2>{{ manageCopy.players }}</h2>
+    <label
+      >{{ manageCopy.player
+      }}<input
+        v-model="playerForm.player"
+        class="control"
+        required
+        pattern="[A-Za-z0-9_]{1,16}"
+        maxlength="16"
+    /></label>
+    <select v-model="playerForm.action" class="control">
+      <option
+        v-for="action in [
+          'whitelist_add',
+          'whitelist_remove',
+          'op',
+          'deop',
+          'ban',
+          'pardon',
+          'kick',
+        ] as const"
+        :key="action"
+        :value="action"
+      >
+        {{ manageCopy[action] }}
+      </option>
+    </select>
+    <label
+      >{{ manageCopy.reason
+      }}<input v-model="playerForm.reason" class="control" maxlength="256"
+    /></label>
+    <button
+      class="button-primary"
+      type="submit"
+      :disabled="
+        pending ||
+        installActive ||
+        !canWrite ||
+        !form.rcon_enabled ||
+        !serverRunning
+      "
+    >
+      {{ manageCopy.send }}
+    </button>
+  </form>
   <section v-if="editorOpen" class="editor panel">
     <header>
       <strong>{{ editorFile }}</strong>
@@ -438,11 +872,16 @@ function bytes(value: number): string {
       </button>
     </header>
     <textarea v-model="editorContent" spellcheck="false" />
-    <button class="button-primary" type="button" @click="saveEditor">
+    <button
+      class="button-primary"
+      type="button"
+      :disabled="pending || installActive || !canWrite"
+      @click="saveEditor"
+    >
       {{ t("common.save") }}
     </button>
   </section>
-  <p class="hint">
+  <p v-if="isForge" class="hint">
     {{
       copy.modsHint.replace("{path}", `/srv/vps-panel/minecraft/${projectId}`)
     }}

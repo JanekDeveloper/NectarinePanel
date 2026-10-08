@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isMinecraftRuntime } from "~/utils/minecraft";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -230,9 +231,7 @@ const composeMonitorOnly = computed(
   () => form.runtime_type === "docker_compose",
 );
 const dockerRuntime = computed(() => form.runtime_type === "docker");
-const minecraftRuntime = computed(
-  () => form.runtime_type === "minecraft_forge",
-);
+const minecraftRuntime = computed(() => isMinecraftRuntime(form.runtime_type));
 const staticRuntime = computed(() => form.runtime_type === "static");
 const commandFieldsVisible = computed(
   () => !composeMonitorOnly.value && !minecraftRuntime.value,
@@ -707,6 +706,9 @@ async function removeMember(): Promise<void> {
                 <option value="docker">Docker</option>
                 <option value="static">{{ copy.staticSite }}</option>
                 <option value="minecraft_forge">Minecraft Forge</option>
+                <option value="minecraft_paper">Minecraft Paper</option>
+                <option value="minecraft_purpur">Minecraft Purpur</option>
+                <option value="minecraft_spigot">Minecraft Spigot</option>
               </select>
               <small>{{ copy.projectTypeHint }}</small>
             </label>
@@ -1071,6 +1073,9 @@ async function removeMember(): Promise<void> {
                   <option value="pm2">PM2</option>
                   <option value="static">Nginx static</option>
                   <option value="minecraft_forge">Minecraft Forge</option>
+                  <option value="minecraft_paper">Minecraft Paper</option>
+                  <option value="minecraft_purpur">Minecraft Purpur</option>
+                  <option value="minecraft_spigot">Minecraft Spigot</option>
                 </select>
                 <small>{{ copy.runtimeHint }}</small>
               </label>
