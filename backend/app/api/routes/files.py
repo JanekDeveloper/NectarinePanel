@@ -286,6 +286,9 @@ def _local_download_response(target: Path) -> FileResponse:
     """Return a local file response after rejecting links and non-files."""
     if not target.is_file() or target.is_symlink():
         raise HTTPException(status_code=404, detail="File not found")
+    # FileResponse opens files after headers, too late for the agent fallback.
+    with target.open("rb"):
+        pass
     return FileResponse(target, filename=target.name)
 
 

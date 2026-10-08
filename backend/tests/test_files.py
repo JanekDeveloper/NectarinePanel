@@ -285,27 +285,31 @@ def test_file_move_falls_back_to_privileged_agent_on_permission_error(
     assert response.json()["path"] == "archive/source.txt"
 
 
+@pytest.mark.parametrize("filename", ["server.js", "applications.sqlite3"])
 def test_file_download_falls_back_to_privileged_agent_on_permission_error(
     client: TestClient,
     auth_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
+    filename: str,
 ) -> None:
     """Protected imported-project files are staged through the system agent."""
-    from app.api.routes import files
     from app.services.agent import AgentClient
 
     project_id = _project(client, auth_headers)
     created = client.post(
         f"/api/v1/projects/{project_id}/files",
         headers=auth_headers,
-        json={"path": "server.js", "kind": "file", "content": "payload"},
+        json={"path": filename, "kind": "file", "content": "payload"},
     )
     assert created.status_code == 201
 
-    def deny_local_download(target: Path) -> object:
-        """Simulate a project root blocked by discretionary access control."""
-        del target
-        raise PermissionError
+    original_open = Path.open
+
+    def deny_file_open(target: Path, *args: Any, **kwargs: Any) -> Any:
+        """Allow metadata access but reject opening the protected source file."""
+        if target.name == filename:
+            raise PermissionError
+        return original_open(target, *args, **kwargs)
 
     async def fake_execute(
         self: AgentClient,
@@ -325,12 +329,12 @@ def test_file_download_falls_back_to_privileged_agent_on_permission_error(
         staged.write_bytes(b"payload")
         return {"path": str(staged), "size_bytes": 7}
 
-    monkeypatch.setattr(files, "_local_download_response", deny_local_download)
+    monkeypatch.setattr(Path, "open", deny_file_open)
     monkeypatch.setattr(AgentClient, "execute", fake_execute)
 
     response = client.get(
         f"/api/v1/projects/{project_id}/files/download",
-        params={"path": "server.js"},
+        params={"path": filename},
         headers=auth_headers,
     )
 

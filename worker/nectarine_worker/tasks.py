@@ -8,7 +8,6 @@ import re
 import shutil
 import sqlite3
 import tempfile
-import zipfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1639,57 +1638,14 @@ def archive_files(
     destination: str,
 ) -> dict[str, Any]:
     """Create a ZIP or TAR.GZ archive without following symbolic links."""
-    managed_root = (settings.storage_root / "projects").resolve()
-    resolved_root = Path(project_root).resolve()
-    if resolved_root == managed_root or managed_root not in resolved_root.parents:
-        task.update_state(state="PROGRESS", meta={"progress": 10, "stage": "scan"})
-        result = agent_operation(
-            "archive_path",
-            {
-                "root": project_root,
-                "source": source,
-                "destination": destination,
-            },
-            timeout=3600,
-        )
-        task.update_state(state="PROGRESS", meta={"progress": 100, "stage": "complete"})
-        return result
-    root, source_path = _worker_project_path(project_root, source)
-    _, destination_path = _worker_project_path(project_root, destination)
-    if not source_path.exists() or source_path.is_symlink():
-        raise ValueError("Archive source is unavailable")
-    if destination_path.exists():
-        raise ValueError("Archive destination already exists")
-    if source_path.is_dir() and (
-        destination_path == source_path or source_path in destination_path.parents
-    ):
-        raise ValueError("Archive destination cannot be inside its source")
-    destination_name = destination_path.name.lower()
-    if not (destination_name.endswith(".zip") or destination_name.endswith(".tar.gz")):
-        raise ValueError("Archive destination must be ZIP or TAR.GZ")
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
     task.update_state(state="PROGRESS", meta={"progress": 10, "stage": "scan"})
-    if destination_name.endswith(".tar.gz"):
-        create_tar_gz_safely(source_path, destination_path, root)
-    else:
-        with zipfile.ZipFile(
-            destination_path,
-            "x",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=6,
-        ) as archive:
-            paths = [source_path]
-            if source_path.is_dir():
-                paths.extend(source_path.rglob("*"))
-            for item in paths:
-                if item.is_symlink():
-                    continue
-                archive.write(item, item.relative_to(root))
+    result = agent_operation(
+        "archive_path",
+        {"root": project_root, "source": source, "destination": destination},
+        timeout=3600,
+    )
     task.update_state(state="PROGRESS", meta={"progress": 100, "stage": "complete"})
-    return {
-        "path": str(destination_path),
-        "size_bytes": destination_path.stat().st_size,
-    }
+    return result
 
 
 @celery_app.task(bind=True, name="files.extract")

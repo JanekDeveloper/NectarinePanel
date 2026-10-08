@@ -114,12 +114,18 @@ def test_tar_gz_archive_rejects_destination_inside_source(tmp_path: Path) -> Non
         create_tar_gz_safely(source, source / "archive.tar.gz", root)
 
 
-def test_file_archive_uses_agent_for_external_project_root(
+@pytest.mark.parametrize("managed", [False, True])
+def test_file_archive_uses_agent_for_project_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    managed: bool,
 ) -> None:
-    """External project archives are delegated to the privileged agent."""
-    external_root = tmp_path / "external-project"
+    """Protected projects inside and outside storage delegate archive creation."""
+    external_root = (
+        tasks.settings.storage_root / "projects" / "protected-project" / "current"
+        if managed
+        else tmp_path / "external-project"
+    )
     calls: list[tuple[str, dict[str, object], float]] = []
 
     def fake_agent_operation(
