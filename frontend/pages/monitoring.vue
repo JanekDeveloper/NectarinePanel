@@ -3,7 +3,6 @@ import type { HostMetrics, MetricSample, Notification } from "~/types/api";
 
 const api = useApi();
 const auth = useAuthStore();
-const config = useRuntimeConfig();
 const { t } = useLocale();
 const { data: metrics, refresh } = await useAsyncData(
   "monitoring-current",
@@ -20,13 +19,6 @@ const { data: notifications, refresh: refreshNotifications } =
 let timer: ReturnType<typeof setInterval> | undefined;
 let socket: WebSocket | undefined;
 
-function monitoringWebSocketUrl(): string {
-  const base = String(config.public.wsBase).replace(/\/$/, "");
-  const url = new URL(`${base}/api/v1/monitoring/live`);
-  url.searchParams.set("token", auth.accessToken || "");
-  return url.toString();
-}
-
 async function markRead(id: string): Promise<void> {
   await api.request(`/monitoring/notifications/${id}/read`, { method: "POST" });
   await refreshNotifications();
@@ -35,7 +27,7 @@ async function markRead(id: string): Promise<void> {
 onMounted(() => {
   auth.restore();
   if (auth.accessToken) {
-    socket = new WebSocket(monitoringWebSocketUrl());
+    socket = new WebSocket(useWebSocketUrl("/monitoring/live"));
     socket.onmessage = (event) => {
       metrics.value = JSON.parse(event.data) as HostMetrics;
     };
