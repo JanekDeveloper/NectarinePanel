@@ -253,7 +253,7 @@ async def list_database_tables(
         if not path.is_file():
             return []
         async with aiosqlite.connect(f"file:{path}?mode=ro", uri=True) as connection:
-            cursor = await connection.execute(
+            sqlite_cursor = await connection.execute(
                 """
                 SELECT name
                 FROM sqlite_master
@@ -263,7 +263,7 @@ async def list_database_tables(
                 """,
                 (limit,),
             )
-            rows = await cursor.fetchall()
-            await cursor.close()
+            rows = await sqlite_cursor.fetchall()
+            await sqlite_cursor.close()
         return [{"schema": None, "name": str(row[0]), "table_type": "table"} for row in rows]
     raise ValueError("Unsupported database engine")

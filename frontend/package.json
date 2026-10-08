@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0",
     "npm": ">=10"
   },
   "scripts": {
+    "audit": "node scripts/audit.mjs",
+    "postinstall": "patch-package --error-on-fail",
     "dev": "nuxt dev --host 0.0.0.0",
     "build": "nuxt build",
     "preview": "nuxt preview",
@@ -21,24 +23,28 @@
     "@tailwindcss/vite": "4.3.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "nuxt": "4.5.1",
+    "nuxt": "4.6.0",
     "pinia": "3.0.4",
     "tailwindcss": "4.3.1",
-    "vue": "3.5.40",
-    "vue-router": "5.2.0"
+    "vue": "3.5.43",
+    "vue-router": "5.3.1"
   },
   "devDependencies": {
     "@nuxt/eslint": "1.16.0",
-    "@nuxt/test-utils": "4.1.0",
+    "@nuxt/test-utils": "4.3.3",
     "@vue/test-utils": "2.4.11",
     "eslint": "10.8.0",
     "happy-dom": "20.10.6",
+    "patch-package": "8.0.1",
     "prettier": "3.5.3",
     "typescript": "6.0.3",
-    "vitest": "4.1.9",
+    "vitest": "4.1.11",
     "vue-tsc": "3.3.5"
   },
   "overrides": {
+    "@nuxt/devtools": {
+      "simple-git": "4.0.2"
+    },
     "glob": "13.0.6",
     "js-beautify": "2.0.3",
     "readdir-glob": "3.0.0"

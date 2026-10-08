@@ -1,0 +1,12 @@
+diff --git a/node_modules/@nuxt/devtools/dist/chunks/module-main.mjs b/node_modules/@nuxt/devtools/dist/chunks/module-main.mjs
+index a4a4f8f..8f3d196 100644
+--- a/node_modules/@nuxt/devtools/dist/chunks/module-main.mjs
++++ b/node_modules/@nuxt/devtools/dist/chunks/module-main.mjs
+@@ -14,6 +14,6 @@ import { createBirpcGroup } from 'birpc';
+ import { parse as parse$1, stringify } from 'structured-clone-es';
+ import { startSubprocess } from '@nuxt/devtools-kit';
+-import Git from 'simple-git';
++import { simpleGit as Git } from 'simple-git';
+ import { glob } from 'tinyglobby';
+ import { imageMeta } from 'image-meta';
+ import { debounce } from 'perfect-debounce';

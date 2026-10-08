@@ -95,7 +95,7 @@ Telegram -> aiogram -> internal authenticated FastAPI endpoints
 Разработка:
 
 - Python 3.12+;
-- Node.js 22.22.2 LTS, 24.15+ LTS или 26+;
+- Node.js 22.22.3 LTS, 24.15+ LTS или 26+;
 - npm 10+;
 - Docker Engine с Compose v2.
 

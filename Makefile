@@ -54,7 +54,7 @@ build-frontend:
 	cd frontend && npm run build
 
 audit-frontend:
-	cd frontend && npm audit --audit-level=high
+	cd frontend && npm run audit
 
 compose-check:
 	docker compose config --quiet

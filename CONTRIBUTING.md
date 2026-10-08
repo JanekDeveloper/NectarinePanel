@@ -2,7 +2,7 @@
 
 ## Development setup
 
-Requirements: Python 3.12+, Node.js 22.22.2 LTS, npm 10+, and Docker Compose v2.
+Requirements: Python 3.12+, Node.js 22.22.3 LTS, npm 10+, and Docker Compose v2.
 
 ```bash
 python3 -m venv .venv

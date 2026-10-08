@@ -93,7 +93,7 @@ Production:
 Development:
 
 - Python 3.12+;
-- Node.js 22.22.2 LTS, 24.15+ LTS, or 26+;
+- Node.js 22.22.3 LTS, 24.15+ LTS, or 26+;
 - npm 10+;
 - Docker Engine with Compose v2.
 

@@ -1,0 +1,12 @@
+{
+  "GHSA-vfj7-8cjw-p6xm": {
+    "package": "braces",
+    "expires": "2026-11-07",
+    "reason": "No upstream fix is published. Used by build-time glob matching on repository-controlled patterns; do not pass untrusted request patterns to these tools."
+  },
+  "GHSA-86w9-cpqp-85rv": {
+    "package": "node-forge",
+    "expires": "2026-11-07",
+    "reason": "No upstream fix is published. Inherited from listhen's development TLS support; production TLS is terminated by Nginx and the panel does not use forge for signature verification."
+  }
+}
