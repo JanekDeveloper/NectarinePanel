@@ -308,6 +308,37 @@ def test_publish_staged_upload_writes_protected_imported_file(
     assert staged.read_bytes() == b"payload"
 
 
+def test_publish_staged_upload_preserves_runtime_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """New uploads and nested directories inherit the project's runtime owner."""
+    root = tmp_path / "home" / "project"
+    root.mkdir(parents=True)
+    storage = tmp_path / "storage"
+    staged = storage / ".uploads" / "upload"
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(b"database payload")
+    monkeypatch.setattr(operations, "EXTERNAL_PROJECT_ROOTS", (tmp_path / "home",))
+    monkeypatch.setattr(operations.settings, "storage_root", storage)
+    ownership: list[tuple[Path, int, int]] = []
+
+    def capture_chown(path: Path, uid: int, gid: int) -> None:
+        """Capture the ownership applied before atomic publication."""
+        ownership.append((path, uid, gid))
+
+    monkeypatch.setattr(operations.os, "chown", capture_chown)
+    operations.publish_staged_upload(str(root), "data/nested/applications.sqlite3", str(staged))
+
+    owner = root.stat()
+    assert [path for path, _, _ in ownership[:2]] == [root / "data", root / "data/nested"]
+    assert ownership[2][0].name.endswith(".upload")
+    assert len(ownership) == 3
+    assert all(uid == owner.st_uid and gid == owner.st_gid for _, uid, gid in ownership)
+    assert (root / "data/nested/applications.sqlite3").read_bytes() == b"database payload"
+    assert (root / "data/nested").stat().st_mode & 0o777 == 0o750
+
+
 def test_archive_path_archives_imported_directory_without_links(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

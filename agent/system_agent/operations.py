@@ -314,11 +314,24 @@ def publish_staged_upload(root: str, path: str, staged_path: str) -> dict[str, A
         pass
     else:
         raise ValueError("Destination already exists")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    owner = project_root.stat()
+    missing_parents: list[Path] = []
+    parent = destination.parent
+    while parent != project_root and not parent.exists():
+        missing_parents.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing_parents):
+        try:
+            directory.mkdir(mode=0o750)
+        except FileExistsError:
+            continue
+        os.chown(directory, owner.st_uid, owner.st_gid)
+        os.chmod(directory, 0o750)
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.upload")
     try:
         with source.open("rb") as source_file, temporary.open("xb") as destination_file:
             shutil.copyfileobj(source_file, destination_file, length=1024 * 1024)
+        os.chown(temporary, owner.st_uid, owner.st_gid)
         os.chmod(temporary, 0o640)
         temporary.replace(destination)
     finally:
