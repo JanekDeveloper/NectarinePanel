@@ -211,6 +211,7 @@ Dokumentacja techniczna:
 [Bazy danych](docs/pl/databases.md) · [Kopie zapasowe](docs/pl/backups.md) ·
 [Monitorowanie](docs/pl/monitoring.md) · [Telegram](docs/pl/telegram.md) ·
 [Minecraft Forge](docs/pl/minecraft-forge.md) ·
+[Paper / Purpur / Spigot](docs/pl/minecraft-servers.md) ·
 [Rozwój](docs/pl/development.md) · [Wydawanie wersji](docs/pl/releasing.md)
 
 Przed żądaniem scalenia przeczytaj [CONTRIBUTING.md](CONTRIBUTING.md). Podatności

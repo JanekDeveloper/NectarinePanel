@@ -209,6 +209,7 @@ sudo /opt/nectarine-panel/installer/uninstall.sh
 [Бази даних](docs/uk/databases.md) · [Резервні копії](docs/uk/backups.md) ·
 [Моніторинг](docs/uk/monitoring.md) · [Telegram](docs/uk/telegram.md) ·
 [Minecraft Forge](docs/uk/minecraft-forge.md) ·
+[Paper / Purpur / Spigot](docs/uk/minecraft-servers.md) ·
 [Розробка](docs/uk/development.md) · [Випуск версій](docs/uk/releasing.md)
 
 Перед запитом на злиття прочитайте [CONTRIBUTING.md](CONTRIBUTING.md). Вразливості

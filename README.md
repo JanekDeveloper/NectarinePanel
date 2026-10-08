@@ -215,6 +215,7 @@ Technical reference:
 - [Monitoring](docs/en/monitoring.md)
 - [Telegram](docs/en/telegram.md)
 - [Minecraft Forge](docs/en/minecraft-forge.md)
+- [Paper / Purpur / Spigot](docs/en/minecraft-servers.md)
 - [Development](docs/en/development.md)
 - [Release process](docs/en/releasing.md)
 

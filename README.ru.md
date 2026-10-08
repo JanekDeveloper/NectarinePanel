@@ -212,6 +212,7 @@ sudo /opt/nectarine-panel/installer/uninstall.sh
 [Базы данных](docs/ru/databases.md) · [Бэкапы](docs/ru/backups.md) ·
 [Мониторинг](docs/ru/monitoring.md) · [Telegram](docs/ru/telegram.md) ·
 [Minecraft Forge](docs/ru/minecraft-forge.md) ·
+[Paper / Purpur / Spigot](docs/ru/minecraft-servers.md) ·
 [Разработка](docs/ru/development.md) · [Выпуск версий](docs/ru/releasing.md)
 
 Перед запросом на слияние прочитайте [CONTRIBUTING.md](CONTRIBUTING.md). Уязвимости
