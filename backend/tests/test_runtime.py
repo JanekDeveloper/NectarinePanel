@@ -1,10 +1,74 @@
 """Project runtime WebSocket tests."""
 
+import base64
 import json
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("§eHelp: §fIndex\n§7Use /help", "Help: Index\r\nUse /help"),
+        ("first\r\nsecond\nthird\rlast", "first\r\nsecond\r\nthird\r\nlast"),
+        ("§x§F§F§0§0§A§AHex §Lbold§R", "Hex bold"),
+        ("§khidden§mstrike§nunder§oitalic§r", "hiddenstrikeunderitalic"),
+        ("Привет §fмир\nУкраїна", "Привет мир\r\nУкраїна"),
+        ("literal § and §z", "literal § and §z"),
+        ("", ""),
+    ],
+)
+def test_minecraft_terminal_output(value: str, expected: str) -> None:
+    """RCON responses contain readable text and carriage-return line feeds."""
+    from app.api.routes.runtime import _minecraft_terminal_output
+
+    assert _minecraft_terminal_output(value) == expected
+
+
+@pytest.mark.parametrize("engine", ["forge", "paper", "purpur", "spigot"])
+def test_minecraft_terminal_formats_command_response(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    engine: str,
+) -> None:
+    """Every Minecraft terminal normalizes RCON output before sending it."""
+    from app.api.routes import runtime
+    from app.schemas.runtime import ConsoleResult
+
+    response = client.post(
+        "/api/v1/projects",
+        headers=auth_headers,
+        json={
+            "name": f"Console {engine}",
+            "project_type": f"minecraft_{engine}",
+            "runtime_type": f"minecraft_{engine}",
+        },
+    )
+    assert response.status_code == 201
+    project_id = response.json()["id"]
+
+    async def fake_command(*args: Any, **kwargs: Any) -> ConsoleResult:
+        """Return a representative multiline help response."""
+        return ConsoleResult(exit_code=0, stdout="§eHelp\n§fCommands\r\n", stderr="")
+
+    monkeypatch.setattr(runtime, "_execute_console_command", fake_command)
+    token = auth_headers["Authorization"].removeprefix("Bearer ")
+    with client.websocket_connect(
+        f"/api/v1/projects/{project_id}/terminal/live?token={token}"
+    ) as websocket:
+        assert websocket.receive_json() == {"type": "ready"}
+        websocket.receive_json()
+        websocket.send_json(
+            {"type": "input", "data": base64.b64encode(b"help\r").decode("ascii")}
+        )
+        output = ""
+        for _ in range(4):
+            message = websocket.receive_json()
+            output += base64.b64decode(message["data"]).decode()
+        assert output == "help\r\nHelp\r\nCommands\r\n> "
 
 
 def _docker_project(client: TestClient, headers: dict[str, str]) -> str:

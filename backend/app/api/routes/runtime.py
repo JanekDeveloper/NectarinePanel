@@ -432,6 +432,12 @@ async def _send_terminal_output(websocket: WebSocket, value: str) -> None:
     )
 
 
+def _minecraft_terminal_output(value: str) -> str:
+    """Remove Minecraft formatting codes and normalize terminal line endings."""
+    text = re.sub(r"§[0-9a-fk-orx]", "", value, flags=re.IGNORECASE)
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+
+
 async def _minecraft_terminal_session(
     websocket: WebSocket,
     *,
@@ -486,7 +492,9 @@ async def _minecraft_terminal_session(
                         except HTTPException as exc:
                             output = str(exc.detail)
                     if output:
-                        await _send_terminal_output(websocket, f"{output}\r\n")
+                        await _send_terminal_output(
+                            websocket, f"{_minecraft_terminal_output(output)}\r\n"
+                        )
                 await _send_terminal_output(websocket, "> ")
                 continue
             if value in {"\b", "\x7f"}:
