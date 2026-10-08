@@ -186,6 +186,7 @@ if [[ "$DRY_RUN" == true ]]; then
     sh -n "$SCRIPT_DIR/helpers/nectarine-agent-helper"
     for required in \
         "$SCRIPT_DIR/templates/panel.env" \
+        "$SCRIPT_DIR/../agent/system_agent/assets/spigot.Dockerfile" \
         "$SCRIPT_DIR/templates/agent.env" \
         "$SCRIPT_DIR/helpers/nectarine-agent-helper" \
         "$SCRIPT_DIR/sudoers/nectarine-agent" \
@@ -298,11 +299,14 @@ install -d -m 0750 -o "$PANEL_USER" -g "$PANEL_USER" \
     "$STORAGE_ROOT" \
     "$STORAGE_ROOT/projects" \
     "$STORAGE_ROOT/minecraft" \
+    "$STORAGE_ROOT/.minecraft-staging" \
+    "$STORAGE_ROOT/.minecraft-locks" \
     "$STORAGE_ROOT/backups/projects" \
     "$STORAGE_ROOT/backups/databases" \
     "$STORAGE_ROOT/backups/full" \
     "$STORAGE_ROOT/imports" \
     "$STORAGE_ROOT/state"
+install -d -m 0700 -o root -g root "$STORAGE_ROOT/.minecraft-agent-locks"
 install -d -m 0770 -o "$PANEL_USER" -g "$PANEL_USER" \
     "$STORAGE_ROOT/databases/sqlite"
 install -d -m 0755 /var/lib/vps-panel/acme /etc/nginx/vps-panel

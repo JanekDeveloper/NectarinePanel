@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from app.api.dependencies import AppSettings, CurrentUser, DbSession
-from app.models.entities import FileOperation, Job, Project
+from app.models.entities import BUKKIT_TYPES, FileOperation, Job, Project
 from app.schemas.common import MessageResponse
 from app.schemas.files import (
     ArchiveRequest,
@@ -34,6 +34,7 @@ from app.schemas.files import (
 )
 from app.services.agent import AgentClient
 from app.services.audit import write_audit_log
+from app.services.minecraft_operations import assert_minecraft_idle, reserve_minecraft_job
 from app.services.paths import UnsafePathError, resolve_within, runtime_root
 from app.services.permissions import require_project_permission
 from app.services.queue import enqueue
@@ -46,7 +47,10 @@ async def _root_or_404(project_id: str, session: DbSession, settings: AppSetting
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    root = runtime_root(settings.storage_root, project)
+    try:
+        root = runtime_root(settings.storage_root, project)
+    except UnsafePathError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if project.runtime_config.get("source_path"):
         try:
             exists = root.is_dir()
@@ -107,6 +111,19 @@ def _safe_path(root: Path, relative: str) -> Path:
         return resolve_within(root, relative)
     except UnsafePathError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _guard_minecraft_file(project: Project, root: Path, target: Path) -> None:
+    """Keep managed launchers and RCON properties behind the Minecraft API."""
+    if project.project_type not in BUKKIT_TYPES:
+        return
+    protected = {root / "server.properties"}
+    if project.runtime_config.get("sha256"):
+        protected.add(root / "server.jar")
+    if any(target == path or target in path.parents for path in protected):
+        raise HTTPException(
+            status_code=409, detail="Use Minecraft settings or update for managed files"
+        )
 
 
 def _safe_delete_path(root: Path, relative: str) -> Path:
@@ -350,9 +367,15 @@ async def create_file_entry(
     settings: AppSettings,
 ) -> FileEntry:
     """Create a text file or directory without overwriting existing data."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     root = await _root_or_404(project_id, session, settings)
     target = _safe_path(root, data.path)
+    _guard_minecraft_file(project, root, target)
     if target.exists() or target.is_symlink():
         raise HTTPException(status_code=409, detail="Path already exists")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -383,9 +406,15 @@ async def write_text_file(
     path: str = Query(min_length=1, max_length=2048),
 ) -> FileEntry:
     """Atomically replace a bounded UTF-8 text file."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     root = await _root_or_404(project_id, session, settings)
     target = _safe_path(root, path)
+    _guard_minecraft_file(project, root, target)
     if not target.is_file() or target.is_symlink():
         raise HTTPException(status_code=404, detail="Text file not found")
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
@@ -413,7 +442,7 @@ async def read_text_file(
     path: str = Query(min_length=1, max_length=2048),
 ) -> dict[str, str]:
     """Read a bounded UTF-8 text file."""
-    await require_project_permission(session, user, project_id, "files:read")
+    project = await require_project_permission(session, user, project_id, "files:read")
     root = await _root_or_404(project_id, session, settings)
     target = _safe_path(root, path)
     if not target.is_file() or target.is_symlink():
@@ -424,6 +453,10 @@ async def read_text_file(
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise HTTPException(status_code=415, detail="File is not UTF-8 text") from exc
+    if project.runtime_type in BUKKIT_TYPES and target == root / "server.properties":
+        from app.api.routes.minecraft import _mask_properties
+
+        content = _mask_properties(content)
     return {"path": path, "content": content}
 
 
@@ -437,10 +470,17 @@ async def move_file_entry(
     path: str = Query(min_length=1, max_length=2048),
 ) -> FileEntry:
     """Atomically move a file or directory inside the project root."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     root = await _root_or_404(project_id, session, settings)
     source = _safe_path(root, path)
     destination = _safe_path(root, data.destination)
+    _guard_minecraft_file(project, root, source)
+    _guard_minecraft_file(project, root, destination)
     try:
         _move_local_path(source, destination)
         entry = _entry(root, destination)
@@ -483,11 +523,17 @@ async def delete_file_entry(
     path: str = Query(min_length=1, max_length=2048),
 ) -> MessageResponse:
     """Delete a confirmed path without following symbolic links."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     if data.confirm_path != path:
         raise HTTPException(status_code=422, detail="Path confirmation mismatch")
     root = await _root_or_404(project_id, session, settings)
     target = _safe_delete_path(root, path)
+    _guard_minecraft_file(project, root, target)
     if target == root:
         raise HTTPException(status_code=422, detail="Project root cannot be deleted")
     try:
@@ -526,9 +572,15 @@ async def upload_file(
     path: str = Query(min_length=1, max_length=2048),
 ) -> FileEntry:
     """Stream an upload to a temporary file and atomically publish it."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     root = await _root_or_404(project_id, session, settings)
     target = _safe_path(root, path)
+    _guard_minecraft_file(project, root, target)
     try:
         if target.exists() or target.is_symlink():
             raise HTTPException(status_code=409, detail="Destination already exists")
@@ -572,9 +624,11 @@ async def download_file(
     path: str = Query(min_length=1, max_length=2048),
 ) -> FileResponse:
     """Download one regular project file."""
-    await require_project_permission(session, user, project_id, "files:read")
+    project = await require_project_permission(session, user, project_id, "files:read")
     root = await _root_or_404(project_id, session, settings)
     target = _safe_path(root, path)
+    if project.runtime_type in BUKKIT_TYPES and target == root / "server.properties":
+        raise HTTPException(status_code=409, detail="Use the Minecraft configuration editor")
     try:
         return _local_download_response(target)
     except PermissionError:
@@ -611,7 +665,12 @@ async def archive_files(
     settings: AppSettings,
 ) -> FileJobResponse:
     """Queue ZIP or TAR.GZ creation inside the project root."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     root = await _root_or_404(project_id, session, settings)
     source = _safe_path(root, data.source)
     destination = _safe_path(root, data.destination)
@@ -626,6 +685,7 @@ async def archive_files(
         payload={"project_id": project_id, "destination": data.destination},
     )
     session.add(job)
+    await reserve_minecraft_job(session, project, job)
     operation = FileOperation(
         project_id=project_id,
         operation="archive",
@@ -663,7 +723,12 @@ async def extract_archive(
     settings: AppSettings,
 ) -> FileJobResponse:
     """Queue validated ZIP or TAR.GZ extraction inside the project root."""
-    await require_project_permission(session, user, project_id, "files:write")
+    project = await require_project_permission(session, user, project_id, "files:write")
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and project.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Stop Minecraft before changing server files"
+        )
     root = await _root_or_404(project_id, session, settings)
     source = _safe_path(root, data.source)
     _safe_path(root, data.destination)
@@ -679,6 +744,7 @@ async def extract_archive(
         payload={"project_id": project_id, "source": data.source},
     )
     session.add(job)
+    await reserve_minecraft_job(session, project, job)
     await write_audit_log(
         session,
         action="file.extract",

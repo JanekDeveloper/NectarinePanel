@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND_ROOT = ROOT / "backend"
-ALEMBIC_HEAD = "c1b2d3e4f5a6"
+ALEMBIC_HEAD = "ab42d910e781"
 ALEMBIC_PREVIOUS_HEAD = "9d7e3c1b2a44"
 
 

@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
-from app.models.entities import ProjectType, RuntimeType
+from app.models.entities import BUKKIT_TYPES, ProjectType, RuntimeType
 
 
 class ProjectBase(BaseModel):
@@ -32,6 +32,40 @@ class ProjectBase(BaseModel):
         if value and any(ord(character) < 32 for character in value):
             raise ValueError("Control characters are not allowed")
         return value
+
+    @model_validator(mode="after")
+    def validate_minecraft_runtime(self) -> "ProjectBase":
+        """Keep plugin server type, runtime and storage ownership consistent."""
+        if self.project_type in BUKKIT_TYPES or self.runtime_type in BUKKIT_TYPES:
+            if str(self.project_type) != str(self.runtime_type):
+                raise ValueError("Minecraft project and runtime types must match")
+            if self.repository_url or self.runtime_config.get("source_path"):
+                raise ValueError("Minecraft servers use managed persistent storage")
+            if any(
+                key in self.runtime_config
+                for key in (
+                    "sha256",
+                    "source",
+                    "build_id",
+                    "forge_version",
+                    "launcher",
+                    "refs",
+                    "buildtools_build",
+                    "buildtools_sha256",
+                )
+            ):
+                raise ValueError("Installed artifact metadata is managed by the panel")
+            if any(
+                key in self.runtime_config
+                for key in {"rcon_password", "rcon.password", "MINECRAFT_RCON_PASSWORD"}
+            ):
+                raise ValueError("Configure RCON through the Minecraft settings endpoint")
+            if (
+                self.runtime_config.get("launch_mode", "jar") != "jar"
+                or self.runtime_config.get("server_jar", "server.jar") != "server.jar"
+            ):
+                raise ValueError("Minecraft plugin servers use the managed server.jar launcher")
+        return self
 
 
 class ProjectCreate(ProjectBase):

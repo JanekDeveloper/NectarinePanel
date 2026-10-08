@@ -1,13 +1,47 @@
 """Allowlisted operation dispatch shared across privilege boundaries."""
 
+from pathlib import Path
 from typing import Any
 
-from system_agent import operations
+from system_agent import minecraft, operations
+from system_agent.config import settings
 from system_agent.protocol import Operation, OperationRequest
 
 
 async def dispatch_operation(request: OperationRequest) -> dict[str, Any]:
     """Dispatch exactly one validated operation without dynamic command lookup."""
+    project_id = request.parameters.get("project_id")
+    fenced = request.operation in {
+        Operation.START_MINECRAFT,
+        Operation.INSTALL_MINECRAFT,
+        Operation.MINECRAFT_STOP,
+        Operation.MINECRAFT_PUBLISH,
+        Operation.MINECRAFT_COMMAND,
+        Operation.MINECRAFT_BACKUP,
+        Operation.MINECRAFT_PLUGIN,
+        Operation.MINECRAFT_FENCE,
+    }
+    if (
+        request.operation == Operation.MINECRAFT_PLUGIN
+        and request.parameters.get("action") == "list"
+    ):
+        fenced = False
+    root = request.parameters.get("root")
+    if isinstance(root, str):
+        path = Path(root)
+        if path.parent == settings.storage_root / "minecraft":
+            project_id = path.name
+            fenced = True
+    if fenced:
+        if not isinstance(project_id, str):
+            raise ValueError("Minecraft project ID is required")
+        async with minecraft.mutation_lock(project_id):
+            return await _dispatch_operation(request)
+    return await _dispatch_operation(request)
+
+
+async def _dispatch_operation(request: OperationRequest) -> dict[str, Any]:
+    """Execute the fixed operation switch after optional helper fencing."""
     match request.operation:
         case Operation.CREATE_DIRECTORY:
             return operations.create_directory(**request.parameters)
@@ -67,6 +101,20 @@ async def dispatch_operation(request: OperationRequest) -> dict[str, Any]:
             return await operations.minecraft_command(**request.parameters)
         case Operation.MINECRAFT_BACKUP:
             return await operations.minecraft_backup(**request.parameters)
+        case Operation.MINECRAFT_STAGE:
+            return await minecraft.stage_server(**request.parameters)
+        case Operation.MINECRAFT_PUBLISH:
+            return minecraft.publish_server(**request.parameters)
+        case Operation.MINECRAFT_CLEANUP:
+            return await minecraft.cleanup_stage(**request.parameters)
+        case Operation.MINECRAFT_STOP:
+            return await minecraft.stop_server(**request.parameters)
+        case Operation.MINECRAFT_STATUS:
+            return await minecraft.server_status(**request.parameters)
+        case Operation.MINECRAFT_PLUGIN:
+            return await minecraft.plugin_operation(**request.parameters)
+        case Operation.MINECRAFT_FENCE:
+            return minecraft.fence_runtime(**request.parameters)
         case Operation.ENABLE_SFTP:
             return await operations.enable_sftp(**request.parameters)
         case Operation.DISABLE_SFTP:

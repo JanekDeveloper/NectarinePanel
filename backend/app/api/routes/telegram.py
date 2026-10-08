@@ -14,6 +14,7 @@ from sqlalchemy import select
 from app.api.dependencies import AppSettings, DbSession
 from app.core.security import token_digest
 from app.models.entities import (
+    MINECRAFT_TYPES,
     Backup,
     DatabaseInstance,
     Job,
@@ -25,6 +26,8 @@ from app.models.entities import (
 )
 from app.services.agent import AgentClient
 from app.services.audit import write_audit_log
+from app.services.minecraft import control_minecraft_runtime
+from app.services.minecraft_operations import minecraft_action, reserve_minecraft_job
 from app.services.paths import runtime_root
 from app.services.queue import enqueue
 from app.services.system_settings import telegram_runtime_settings
@@ -249,6 +252,7 @@ async def telegram_project_action(
             payload={"backup_id": backup.id, "project_id": project.id},
         )
         session.add(job)
+        await reserve_minecraft_job(session, project, job)
         await session.commit()
         enqueue(
             "backups.create_project",
@@ -261,16 +265,17 @@ async def telegram_project_action(
             },
         )
     else:
-        if project.runtime_type not in {"docker", "minecraft_forge"}:
+        if project.runtime_type not in {"docker", *MINECRAFT_TYPES}:
             raise HTTPException(status_code=409, detail="Unsupported runtime action")
-        await AgentClient(settings).execute(
-            "manage_container",
-            {
-                "container": f"vps-project-{project.id}",
-                "action": data.action,
-            },
-            request_timeout=150,
-        )
+        if project.runtime_type in MINECRAFT_TYPES:
+            async with minecraft_action(session, project, data.action):
+                await control_minecraft_runtime(project, data.action, session, settings)
+        else:
+            await AgentClient(settings).execute(
+                "manage_container",
+                {"container": f"vps-project-{project.id}", "action": data.action},
+                request_timeout=150,
+            )
         project.status = "stopped" if data.action == "stop" else "running"
         job = Job(
             kind=f"telegram.project_{data.action}",

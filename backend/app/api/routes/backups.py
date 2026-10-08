@@ -26,7 +26,9 @@ from app.schemas.backup import (
     RestoreRequest,
 )
 from app.services.audit import write_audit_log
+from app.services.minecraft_operations import reserve_minecraft_job
 from app.services.paths import runtime_root
+from app.services.permissions import require_project_permission
 from app.services.queue import enqueue
 
 router = APIRouter(tags=["backups"])
@@ -137,6 +139,7 @@ async def create_project_backup(
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    await require_project_permission(session, user, project_id, "deploy:write")
     source = runtime_root(settings.storage_root, project)
     if not source.is_dir():
         raise HTTPException(status_code=409, detail="Project files do not exist yet")
@@ -155,6 +158,7 @@ async def create_project_backup(
         payload={"backup_id": backup.id, "project_id": project.id},
     )
     session.add(job)
+    await reserve_minecraft_job(session, project, job)
     await write_audit_log(
         session,
         action="backup.create",
@@ -350,6 +354,8 @@ async def restore_project_backup(
         payload={"backup_id": backup.id, "project_id": project.id},
     )
     session.add(job)
+    await require_project_permission(session, user, project.id, "deploy:write")
+    await reserve_minecraft_job(session, project, job)
     backup.status = "restoring"
     await write_audit_log(
         session,

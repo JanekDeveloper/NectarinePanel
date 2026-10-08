@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.api.dependencies import AppSettings, CurrentUser, DbSession
 from app.core.security import SecretCipher
 from app.models.entities import (
+    BUKKIT_TYPES,
     Domain,
     EnvironmentVariable,
     EnvironmentVariableVersion,
@@ -48,6 +49,7 @@ from app.schemas.project import (
 from app.schemas.user import ProjectMembershipResponse, ProjectMembershipUpsert
 from app.services.agent import AgentClient
 from app.services.audit import write_audit_log
+from app.services.minecraft_operations import assert_minecraft_idle
 from app.services.permissions import (
     accessible_project_ids,
     require_global_role,
@@ -70,6 +72,17 @@ async def _project_or_404(session: DbSession, project_id: str) -> Project:
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+async def _guard_minecraft_environment(
+    session: DbSession, project: Project, keys: set[str]
+) -> None:
+    """Fence secret changes and protect the managed RCON store from generic CRUD."""
+    await assert_minecraft_idle(session, project)
+    if project.project_type in BUKKIT_TYPES and "MINECRAFT_RCON_PASSWORD" in keys:
+        raise HTTPException(
+            status_code=409, detail="Use the Minecraft settings endpoint for RCON"
+        )
 
 
 async def _memberships(project_id: str, session: DbSession) -> list[ProjectMembership]:
@@ -222,6 +235,9 @@ async def create_project_endpoint(
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(status_code=409, detail="Project name already exists") from exc
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     await session.refresh(project)
     return project
 
@@ -295,7 +311,11 @@ async def patch_project(
 ) -> Project:
     """Update mutable project settings."""
     project = await require_project_permission(session, user, project_id, "project:update")
-    update_project(project, data)
+    await assert_minecraft_idle(session, project)
+    try:
+        update_project(project, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     source = await session.scalar(
         select(ProjectSource).where(ProjectSource.project_id == project.id)
     )
@@ -444,6 +464,7 @@ async def remove_project(
     """Delete project resources and metadata after exact-name confirmation."""
     require_global_role(user, UserRole.OWNER, UserRole.ADMIN)
     project = await _project_or_404(session, project_id)
+    await assert_minecraft_idle(session, project)
     if data.confirm_project_name != project.name:
         raise HTTPException(status_code=409, detail="Project name confirmation does not match")
     hostnames = list(
@@ -635,7 +656,8 @@ async def put_project_resource_policy(
 ) -> ProjectResourcePolicyResponse:
     """Create or replace the project resource guardrails policy."""
     require_global_role(user, UserRole.OWNER, UserRole.ADMIN)
-    await _project_or_404(session, project_id)
+    project = await _project_or_404(session, project_id)
+    await assert_minecraft_idle(session, project)
     policy = await session.scalar(
         select(ProjectResourcePolicy).where(ProjectResourcePolicy.project_id == project_id)
     )
@@ -771,7 +793,8 @@ async def rollback_environment(
     session: DbSession,
 ) -> EnvironmentVariableResponse:
     """Restore one environment variable from a selected history entry."""
-    await require_project_permission(session, user, project_id, "env:write")
+    project = await require_project_permission(session, user, project_id, "env:write")
+    await _guard_minecraft_environment(session, project, {key})
     if key != data.confirm_key:
         raise HTTPException(
             status_code=409,
@@ -842,7 +865,7 @@ async def import_environment(
     settings: AppSettings,
 ) -> EnvironmentImportResponse:
     """Bulk import dotenv values without shell expansion."""
-    await require_project_permission(session, user, project_id, "env:write")
+    project = await require_project_permission(session, user, project_id, "env:write")
     incoming = _parse_dotenv(data.content)
     current = {
         variable.key: variable
@@ -850,6 +873,9 @@ async def import_environment(
             select(EnvironmentVariable).where(EnvironmentVariable.project_id == project_id)
         )
     }
+    await _guard_minecraft_environment(
+        session, project, set(incoming) | (set(current) if data.mode == "replace" else set())
+    )
     cipher = SecretCipher(settings.field_encryption_key)
     created = 0
     updated = 0
@@ -932,7 +958,8 @@ async def put_environment(
     settings: AppSettings,
 ) -> EnvironmentVariableResponse:
     """Create or replace an encrypted environment variable."""
-    await require_project_permission(session, user, project_id, "env:write")
+    project = await require_project_permission(session, user, project_id, "env:write")
+    await _guard_minecraft_environment(session, project, {key})
     if key != data.key:
         raise HTTPException(status_code=422, detail="Path key must match body key")
     variable = await session.scalar(
@@ -988,7 +1015,8 @@ async def delete_environment(
     settings: AppSettings,
 ) -> MessageResponse:
     """Delete an environment variable without exposing its prior value."""
-    await require_project_permission(session, user, project_id, "env:write")
+    project = await require_project_permission(session, user, project_id, "env:write")
+    await _guard_minecraft_environment(session, project, {key})
     variable = await session.scalar(
         select(EnvironmentVariable).where(
             EnvironmentVariable.project_id == project_id,

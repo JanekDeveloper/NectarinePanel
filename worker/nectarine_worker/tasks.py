@@ -21,6 +21,7 @@ import httpx
 from app.core.config import get_settings
 from app.core.security import SecretCipher
 from app.models.entities import (
+    MINECRAFT_TYPES,
     Backup,
     BackupPolicy,
     CronJob,
@@ -43,6 +44,8 @@ from app.services.databases import (
     sqlite_connection_string,
     sqlite_database_path,
 )
+from app.services.minecraft import minecraft_parameters
+from app.services.minecraft_operations import reserve_minecraft_job
 from app.services.paths import runtime_root
 from app.services.system_settings import alert_thresholds
 from app.version import APP_VERSION
@@ -53,6 +56,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from nectarine_worker.celery_app import celery_app
+from nectarine_worker.minecraft import persist_phase, reserved_operation, stop_parameters
 from nectarine_worker.notifications import create_owner_alert, enqueue_telegram_alert
 from nectarine_worker.runner import (
     BACKUP_FORMAT_VERSION,
@@ -514,7 +518,7 @@ def _deploy_runtime(
             },
             timeout=1900,
         )
-    if runtime_type == "minecraft_forge":
+    if runtime_type in MINECRAFT_TYPES:
         task.update_state(state="PROGRESS", meta={"progress": 60, "stage": "minecraft"})
         xmx = str(runtime_config.get("xmx", "2G"))
         memory_mb = resource_policy.get("memory_mb")
@@ -551,7 +555,7 @@ async def _persist_minecraft_install(
     """Persist the launcher selected by a completed Forge installation."""
     async with SessionFactory() as session:
         project = await session.get(Project, project_id)
-        if project is None or project.project_type != "minecraft_forge":
+        if project is None or project.project_type not in MINECRAFT_TYPES:
             raise ValueError("Minecraft project no longer exists")
         configuration = dict(project.runtime_config)
         configuration["server_jar"] = str(result["launcher"])
@@ -592,6 +596,7 @@ async def _persist_docker_upstream_port(project_id: str, host_port: int) -> None
 
 
 @celery_app.task(bind=True, name="minecraft.install")
+@reserved_operation
 def install_minecraft_server(
     task: Any,
     *,
@@ -612,6 +617,11 @@ def install_minecraft_server(
             "installer_jar": installer_jar,
             "minecraft_version": minecraft_version,
             "forge_version": forge_version,
+            **(
+                {"job_id": str(task.request.id)}
+                if getattr(getattr(task, "request", None), "id", None)
+                else {}
+            ),
         },
         timeout=1900,
     )
@@ -625,7 +635,7 @@ async def _minecraft_backup_parameters(project_id: str) -> dict[str, Any] | None
     """Load RCON parameters when the backup belongs to a Minecraft project."""
     async with SessionFactory() as session:
         project = await session.get(Project, project_id)
-        if project is None or project.project_type != "minecraft_forge":
+        if project is None or project.project_type not in MINECRAFT_TYPES:
             return None
         configuration = project.runtime_config
         password: str | None = None
@@ -1114,7 +1124,15 @@ def rollback_release(
     }
 
 
+async def minecraft_backup_configuration(project_id: str) -> dict[str, Any]:
+    """Capture non-secret runtime metadata for the same backup point."""
+    async with SessionFactory() as session:
+        project = await session.get(Project, project_id)
+        return dict(project.runtime_config) if project else {}
+
+
 @celery_app.task(bind=True, name="backups.create_project")
+@reserved_operation
 def backup_project(
     task: Any,
     *,
@@ -1136,9 +1154,13 @@ def backup_project(
         try:
             minecraft_parameters = asyncio.run(_minecraft_backup_parameters(project_id))
             if minecraft_parameters is not None:
+                task_id = getattr(getattr(task, "request", None), "id", None)
+                if task_id:
+                    asyncio.run(persist_phase(str(task_id), "world_backup", 10))
                 preparation = agent_operation(
                     "minecraft_backup",
                     {**minecraft_parameters, "action": "prepare"},
+                    timeout=150,
                 )
                 prepared_minecraft = bool(preparation.get("prepared", False))
             task.update_state(state="PROGRESS", meta={"progress": 20, "stage": "archive"})
@@ -1160,6 +1182,13 @@ def backup_project(
         asyncio.run(mark_backup_failed(backup_id, str(exc)))
         raise
     artifact = Path(str(manifest["artifact_path"]))
+    if minecraft_parameters is not None:
+        manifest["minecraft_configuration"] = asyncio.run(
+            minecraft_backup_configuration(project_id)
+        )
+        artifact.with_suffix(artifact.suffix + ".manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
     asyncio.run(mark_backup_ready(backup_id, manifest, artifact))
     if retention_count is not None:
         asyncio.run(prune_project_backups(project_id, retention_count))
@@ -1489,6 +1518,7 @@ def cleanup_backups(*, backup_directory: str, keep: int) -> dict[str, int]:
 
 
 @celery_app.task(bind=True, name="backups.restore_project")
+@reserved_operation
 def restore_project_backup(
     task: Any,
     *,
@@ -1501,6 +1531,18 @@ def restore_project_backup(
     task.update_state(state="PROGRESS", meta={"progress": 10, "stage": "verify"})
     archive = Path(archive_path)
     manifest = archive.with_suffix(archive.suffix + ".manifest.json")
+
+    async def restore_context() -> dict[str, Any] | None:
+        """Resolve local-only lifecycle parameters for a Minecraft restore."""
+        async with SessionFactory() as session:
+            project = await session.get(Project, project_id)
+            if project is None or project.runtime_type not in MINECRAFT_TYPES:
+                return None
+            return await minecraft_parameters(project, session, settings)
+
+    minecraft_launch = asyncio.run(restore_context())
+    if minecraft_launch:
+        agent_operation("minecraft_stop", stop_parameters(minecraft_launch), timeout=150)
     task.update_state(state="PROGRESS", meta={"progress": 35, "stage": "extract"})
     restore_backup(
         archive,
@@ -1510,6 +1552,27 @@ def restore_project_backup(
         expected_project_id=project_id,
     )
     task.update_state(state="PROGRESS", meta={"progress": 100, "stage": "complete"})
+    if minecraft_launch:
+        restored_configuration = json.loads(manifest.read_text(encoding="utf-8")).get(
+            "minecraft_configuration"
+        )
+
+        async def persist_restored_configuration() -> None:
+            """Keep launcher metadata consistent with the restored server tree."""
+            async with SessionFactory() as session:
+                project = await session.get(Project, project_id)
+                runtime = await session.scalar(
+                    select(ProjectRuntime).where(ProjectRuntime.project_id == project_id)
+                )
+                if project is not None:
+                    project.status = "stopped"
+                    if isinstance(restored_configuration, dict):
+                        project.runtime_config = restored_configuration
+                        if runtime:
+                            runtime.configuration = restored_configuration
+                    await session.commit()
+
+        asyncio.run(persist_restored_configuration())
     return {"backup_id": backup_id, "restored": True}
 
 
@@ -1567,6 +1630,7 @@ def import_project_backup(
 
 
 @celery_app.task(bind=True, name="files.archive")
+@reserved_operation
 def archive_files(
     task: Any,
     *,
@@ -1629,6 +1693,7 @@ def archive_files(
 
 
 @celery_app.task(bind=True, name="files.extract")
+@reserved_operation
 def extract_files(
     task: Any,
     *,
@@ -2069,8 +2134,35 @@ async def store_project_metrics() -> dict[str, int]:
                             "process_count": 0,
                         }
                     )
+                if project.runtime_type in MINECRAFT_TYPES:
+                    try:
+                        values["minecraft"] = await asyncio.to_thread(
+                            agent_operation,
+                            "minecraft_status",
+                            {
+                                "project_id": project.id,
+                                "game_port": int(
+                                    project.runtime_config.get("game_port", 25565)
+                                ),
+                            },
+                        )
+                    except Exception:
+                        values["minecraft"] = {
+                            "available": False,
+                            "online_players": None,
+                            "max_players": None,
+                        }
                 resource_status = values.get("resource_status")
-                if project.status != "deploying" and resource_status in {"running", "stopped"}:
+                active_operation = await session.scalar(
+                    select(ProjectRuntime.active_job_id).where(
+                        ProjectRuntime.project_id == project.id
+                    )
+                )
+                if (
+                    not active_operation
+                    and project.status != "deploying"
+                    and resource_status in {"running", "stopped"}
+                ):
                     project.status = str(resource_status)
                 violations = _resource_violations(values, policy)
                 values["resource_violations"] = violations
@@ -2262,7 +2354,14 @@ async def _cron_agent_request(
                 "command": job.command,
             },
         )
-    if project.runtime_type == "minecraft_forge":
+    if project.runtime_type in MINECRAFT_TYPES:
+        active_job = await session.scalar(
+            select(ProjectRuntime.active_job_id)
+            .where(ProjectRuntime.project_id == project.id)
+            .with_for_update()
+        )
+        if active_job:
+            raise ValueError("Minecraft operation in progress")
         configuration = project.runtime_config
         if not bool(configuration.get("rcon_enabled", False)):
             raise ValueError("Minecraft RCON is disabled")
@@ -2348,6 +2447,14 @@ async def schedule_due_backups() -> dict[str, int]:
             policy.last_run_at = now
             if project is None:
                 continue
+            if project.runtime_type in MINECRAFT_TYPES:
+                runtime = await session.scalar(
+                    select(ProjectRuntime)
+                    .where(ProjectRuntime.project_id == project.id)
+                    .with_for_update()
+                )
+                if runtime is None or runtime.active_job_id:
+                    continue
             source = runtime_root(settings.storage_root, project)
             if source.is_dir():
                 backup = Backup(
@@ -2367,6 +2474,7 @@ async def schedule_due_backups() -> dict[str, int]:
                 )
                 session.add(job)
                 await session.flush()
+                await reserve_minecraft_job(session, project, job)
                 queued_tasks.append(
                     (
                         "backups.create_project",

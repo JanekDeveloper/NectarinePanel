@@ -185,6 +185,9 @@ def test_builtin_templates_cover_required_project_types(
         "static-site",
         "docker-compose",
         "minecraft-forge",
+        "minecraft-paper",
+        "minecraft-purpur",
+        "minecraft-spigot",
     }
     response = client.get("/api/v1/projects/templates", headers=auth_headers)
     assert response.status_code == 200

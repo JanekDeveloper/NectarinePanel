@@ -383,6 +383,8 @@ async def get_job(job_id: str, user: CurrentUser, session: DbSession) -> Job:
     project_id = job.payload.get("project_id")
     if isinstance(project_id, str):
         await require_project_permission(session, user, project_id, "project:read")
+    if job.kind.startswith("minecraft.") or "phase" in job.payload:
+        return job
     status = task_status(job.id)
     job.status = status["state"].lower()
     job.progress = int(status.get("progress", job.progress))

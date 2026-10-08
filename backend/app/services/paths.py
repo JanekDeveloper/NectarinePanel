@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.models.entities import BUKKIT_TYPES, MINECRAFT_TYPES
+
 
 class UnsafePathError(ValueError):
     """Raised when a user path escapes its allowed root."""
@@ -45,7 +47,16 @@ def _external_source_root(source_path: str) -> Path:
 def runtime_root(storage_root: Path, project: ProjectPathSource) -> Path:
     """Return the type-specific project filesystem root."""
     source_path = project.runtime_config.get("source_path")
-    if isinstance(source_path, str) and source_path.strip():
+    if (
+        project.project_type not in BUKKIT_TYPES
+        and isinstance(source_path, str)
+        and source_path.strip()
+    ):
         return _external_source_root(source_path)
-    category = "minecraft" if project.project_type == "minecraft_forge" else "projects"
+    category = "minecraft" if project.project_type in MINECRAFT_TYPES else "projects"
+    if category == "minecraft":
+        if (storage_root / category).is_symlink() or (
+            storage_root / category / project.id
+        ).is_symlink():
+            raise UnsafePathError("Minecraft storage cannot be a symlink")
     return resolve_within(storage_root / category, project.id)

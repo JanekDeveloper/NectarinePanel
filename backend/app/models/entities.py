@@ -30,6 +30,9 @@ class ProjectType(StrEnum):
     DOCKER = "docker"
     STATIC = "static"
     MINECRAFT_FORGE = "minecraft_forge"
+    MINECRAFT_PAPER = "minecraft_paper"
+    MINECRAFT_PURPUR = "minecraft_purpur"
+    MINECRAFT_SPIGOT = "minecraft_spigot"
 
 
 class RuntimeType(StrEnum):
@@ -41,6 +44,15 @@ class RuntimeType(StrEnum):
     PM2 = "pm2"
     STATIC = "static"
     MINECRAFT_FORGE = "minecraft_forge"
+    MINECRAFT_PAPER = "minecraft_paper"
+    MINECRAFT_PURPUR = "minecraft_purpur"
+    MINECRAFT_SPIGOT = "minecraft_spigot"
+
+
+MINECRAFT_TYPES = frozenset(
+    {"minecraft_forge", "minecraft_paper", "minecraft_purpur", "minecraft_spigot"}
+)
+BUKKIT_TYPES = MINECRAFT_TYPES - {"minecraft_forge"}
 
 
 class ProjectStatus(StrEnum):
@@ -192,6 +204,9 @@ class ProjectRuntime(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     runtime_type: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default="created")
     configuration: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    active_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), index=True
+    )
 
 
 class ProjectSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):

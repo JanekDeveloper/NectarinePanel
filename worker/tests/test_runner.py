@@ -636,6 +636,12 @@ def test_minecraft_backup_flushes_before_archive_and_resumes(
         }
 
     monkeypatch.setattr(tasks, "_minecraft_backup_parameters", fake_parameters)
+
+    async def fake_configuration(project_id: str) -> dict[str, object]:
+        """Provide launcher metadata without opening an unrelated database."""
+        return {"server_jar": "forge-server.jar", "java_version": 21}
+
+    monkeypatch.setattr(tasks, "minecraft_backup_configuration", fake_configuration)
     monkeypatch.setattr(tasks, "mark_backup_ready", no_op)
     monkeypatch.setattr(tasks, "mark_backup_failed", no_op)
     monkeypatch.setattr(tasks, "agent_operation", fake_agent)

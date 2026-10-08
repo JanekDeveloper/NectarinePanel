@@ -442,6 +442,26 @@ TEMPLATES: dict[str, ProjectTemplate] = {
 }
 
 
+for _engine in ("paper", "purpur", "spigot"):
+    TEMPLATES[f"minecraft-{_engine}"] = ProjectTemplate(
+        id=f"minecraft-{_engine}",
+        name=f"Minecraft {_engine.title()} server",
+        description="Plugin server with official installation, backups and RCON.",
+        project_type=f"minecraft_{_engine}",
+        runtime_type=f"minecraft_{_engine}",
+        runtime_config={
+            "java_version": 25,
+            "xms": "1G",
+            "xmx": "2G",
+            "game_port": 25565,
+            "server_jar": "server.jar",
+            "eula_accepted": False,
+            "rcon_enabled": True,
+        },
+        files={"eula.txt": "eula=false\n"},
+    )
+
+
 def list_project_templates() -> list[ProjectTemplate]:
     """Return all built-in templates in UI order."""
     return list(TEMPLATES.values())

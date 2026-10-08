@@ -6,7 +6,7 @@ import unicodedata
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.entities import Project, ProjectRuntime, ProjectSource
+from app.models.entities import BUKKIT_TYPES, Project, ProjectRuntime, ProjectSource
 from app.schemas.project import ProjectCreate, ProjectUpdate
 
 
@@ -62,6 +62,28 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
 
 def update_project(project: Project, data: ProjectUpdate) -> None:
     """Apply safe mutable project fields."""
+    if (
+        project.project_type in BUKKIT_TYPES
+        or data.project_type in BUKKIT_TYPES
+        or data.runtime_type in BUKKIT_TYPES
+    ):
+        if (
+            "project_type" in data.model_fields_set
+            and data.project_type != project.project_type
+        ):
+            raise ValueError("Minecraft engine cannot be changed")
+        if (
+            "runtime_type" in data.model_fields_set
+            and data.runtime_type != project.runtime_type
+        ):
+            raise ValueError("Minecraft runtime cannot be changed")
+        if (
+            "runtime_config" in data.model_fields_set
+            and data.runtime_config != project.runtime_config
+        ):
+            raise ValueError("Use the Minecraft configuration endpoint")
+        if data.repository_url:
+            raise ValueError("Minecraft servers use managed storage")
     updates = data.model_dump(exclude_unset=True, mode="json")
     for field, value in updates.items():
         setattr(project, field, value)

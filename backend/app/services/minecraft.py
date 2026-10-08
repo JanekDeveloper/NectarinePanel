@@ -1,4 +1,4 @@
-"""Minecraft Forge catalog and runtime orchestration helpers."""
+"""Minecraft catalogs, encrypted RCON access and runtime orchestration helpers."""
 
 import re
 import time
@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.security import SecretCipher
-from app.models.entities import EnvironmentVariable, Project
+from app.models.entities import (
+    BUKKIT_TYPES,
+    EnvironmentVariable,
+    Project,
+    ProjectResourcePolicy,
+)
 from app.services.agent import AgentClient
 
 RCON_ENV_KEY = "MINECRAFT_RCON_PASSWORD"
@@ -111,22 +116,33 @@ async def minecraft_rcon_password(
     return SecretCipher(settings.field_encryption_key).decrypt(variable.encrypted_value)
 
 
-async def start_minecraft_runtime(
+async def minecraft_parameters(
     project: Project,
     session: AsyncSession,
     settings: Settings,
+    *,
+    require_rcon: bool = True,
 ) -> dict[str, object]:
-    """Start a configured Minecraft server through the system agent."""
+    """Resolve validated launch settings and decrypt secrets only at execution."""
     configuration = project.runtime_config
     password = None
     if bool(configuration.get("rcon_enabled", False)):
-        password = await minecraft_rcon_password(session, project.id, settings)
+        try:
+            password = await minecraft_rcon_password(session, project.id, settings)
+        except ValueError:
+            if require_rcon:
+                raise
     parameters = {
         "project_id": project.id,
         "java_version": int(configuration.get("java_version", 21)),
         "xms": str(configuration.get("xms", "1G")),
         "xmx": str(configuration.get("xmx", "4G")),
-        "server_jar": str(configuration.get("server_jar", "forge-server.jar")),
+        "server_jar": str(
+            configuration.get(
+                "server_jar",
+                "server.jar" if project.project_type in BUKKIT_TYPES else "forge-server.jar",
+            )
+        ),
         "launch_mode": str(configuration.get("launch_mode", "jar")),
         "game_port": int(configuration.get("game_port", 25565)),
         "eula_accepted": bool(configuration.get("eula_accepted", False)),
@@ -135,8 +151,42 @@ async def start_minecraft_runtime(
         "rcon_host_port": int(configuration.get("rcon_host_port", 25575)),
         "rcon_password": password,
     }
+    policy = await session.scalar(
+        select(ProjectResourcePolicy).where(ProjectResourcePolicy.project_id == project.id)
+    )
+    if policy is not None and policy.enabled:
+        parameters.update(cpu_cores=policy.cpu_cores, memory_mb=policy.memory_mb)
+    parameters["wait_ready"] = project.project_type in BUKKIT_TYPES
+    if project.project_type in BUKKIT_TYPES:
+        parameters["server_sha256"] = configuration.get("sha256")
+    return parameters
+
+
+async def start_minecraft_runtime(
+    project: Project, session: AsyncSession, settings: Settings
+) -> dict[str, object]:
+    """Start Minecraft with its persisted launcher, secret and resource policy."""
+    if project.project_type in BUKKIT_TYPES and not project.runtime_config.get("sha256"):
+        raise ValueError("Install Minecraft before starting the server")
     return await AgentClient(settings).execute(
         "start_minecraft",
-        parameters,
-        request_timeout=210,
+        await minecraft_parameters(project, session, settings),
+        request_timeout=390,
     )
+
+
+async def control_minecraft_runtime(
+    project: Project, action: str, session: AsyncSession, settings: Settings
+) -> None:
+    """Apply Minecraft lifecycle actions consistently for UI and Telegram."""
+    if action not in {"start", "stop", "restart"}:
+        raise ValueError("Unsupported Minecraft action")
+    if action in {"stop", "restart"}:
+        parameters = await minecraft_parameters(project, session, settings)
+        await AgentClient(settings).execute(
+            "minecraft_stop",
+            {key: parameters[key] for key in ("project_id", "rcon_host_port", "rcon_password")},
+            request_timeout=150,
+        )
+    if action in {"start", "restart"}:
+        await start_minecraft_runtime(project, session, settings)

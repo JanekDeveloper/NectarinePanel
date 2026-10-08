@@ -6,15 +6,18 @@ from typing import Any
 
 import httpx
 from app.core.config import get_settings
-from app.db.session import SessionFactory
 from app.models.entities import Notification, Project
 from app.services.system_settings import telegram_runtime_settings
 from celery.signals import task_failure, task_success
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from nectarine_worker.celery_app import celery_app
 
 settings = get_settings()
+notification_engine = create_async_engine(settings.database_url, poolclass=NullPool)
+SessionFactory = async_sessionmaker(notification_engine, expire_on_commit=False)
 logger = logging.getLogger(__name__)
 DEPLOY_TASKS = frozenset(
     {

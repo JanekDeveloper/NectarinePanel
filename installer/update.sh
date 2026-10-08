@@ -232,6 +232,10 @@ visudo -cf /etc/sudoers.d/nectarine-agent
 )
 
 storage_root="$(sed -n 's/^STORAGE_ROOT=//p' "$CONFIG_DIR/panel.env")"
+[[ "$storage_root" == /* && "$storage_root" != / ]] || fail "Invalid storage root"
+install -d -m 0750 -o "$PANEL_USER" -g "$PANEL_USER" \
+    "$storage_root/.minecraft-staging" "$storage_root/.minecraft-locks"
+install -d -m 0700 -o root -g root "$storage_root/.minecraft-agent-locks"
 render_unit() {
     local source="$1"
     local target="$2"

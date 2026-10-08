@@ -24,6 +24,8 @@ from typing import Any
 import psutil
 
 from system_agent.config import settings
+from system_agent.minecraft import java_image, project_root
+from system_agent.minecraft import safe_child as minecraft_child
 from system_agent.security import safe_child
 
 HOSTNAME_PATTERN = re.compile(
@@ -49,8 +51,11 @@ DOCKER_MOUNT_TARGET_PATTERN = re.compile(
 )
 COMPOSE_SERVICE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 LINUX_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+MINECRAFT_TYPES = frozenset(
+    {"minecraft_forge", "minecraft_paper", "minecraft_purpur", "minecraft_spigot"}
+)
 RUNTIME_TYPES = frozenset(
-    {"docker", "docker_compose", "systemd", "pm2", "static", "minecraft_forge"}
+    {"docker", "docker_compose", "systemd", "pm2", "static", *MINECRAFT_TYPES}
 )
 EXTERNAL_PROJECT_ROOTS = (Path("/home"), Path("/opt"), Path("/srv"), Path("/var/www"))
 FORGE_MAVEN_HOST = "maven.minecraftforge.net"
@@ -2007,11 +2012,27 @@ def _write_server_properties(
 ) -> None:
     """Update required server properties while preserving unrelated values."""
     path = root / "server.properties"
+    if path.exists() and not path.is_file():
+        raise ValueError("Minecraft properties must be a regular file")
     properties: dict[str, str] = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 key, value = line.split("=", 1)
+                decoded_key = re.sub(
+                    r"\\u([a-fA-F0-9]{4})", lambda match: chr(int(match[1], 16)), key.strip()
+                )
+                decoded_key = re.sub(r"\\(.)", r"\1", decoded_key)
+                if decoded_key in {
+                    "server-port",
+                    "enable-rcon",
+                    "rcon.port",
+                    "rcon.password",
+                    "broadcast-rcon-to-ops",
+                }:
+                    continue
+                if (len(value) - len(value.rstrip("\\"))) % 2:
+                    value += "\\"
                 properties[key] = value
     properties["server-port"] = str(game_port)
     properties["enable-rcon"] = str(rcon_enabled).lower()
@@ -2028,7 +2049,9 @@ def _write_server_properties(
 
 def _write_forge_jvm_arguments(root: Path, *, xms: str, xmx: str) -> None:
     """Persist managed memory limits while preserving unrelated Forge JVM options."""
-    path = root / "user_jvm_args.txt"
+    path = minecraft_child(root, "user_jvm_args.txt")
+    if path.exists() and not path.is_file():
+        raise ValueError("Forge JVM arguments must be a regular file")
     retained: list[str] = []
     if path.is_file() and not path.is_symlink():
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -2119,12 +2142,15 @@ async def install_minecraft(
     installer_jar: str | None = None,
     minecraft_version: str | None = None,
     forge_version: str | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Download or run a Forge installer in a restricted temporary JDK container."""
     if not PROJECT_ID_PATTERN.fullmatch(project_id):
         raise ValueError("Invalid project ID")
     if java_version not in {8, 11, 16, 17, 21, 25}:
         raise ValueError("Unsupported Java version")
+    if job_id is not None and not PROJECT_ID_PATTERN.fullmatch(job_id):
+        raise ValueError("Invalid Minecraft job ID")
     automatic = minecraft_version is not None or forge_version is not None
     if automatic:
         if minecraft_version is None or forge_version is None or installer_jar is not None:
@@ -2134,9 +2160,16 @@ async def install_minecraft(
         raise ValueError("Forge installer source is required")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,255}\.jar", installer_jar):
         raise ValueError("Invalid Forge installer JAR name")
-    root = safe_child(settings.storage_root, f"minecraft/{project_id}")
+    root = project_root(project_id)
     root.mkdir(parents=True, exist_ok=True)
     owner = root.stat()
+    if owner.st_uid == 0:
+        account = pwd.getpwnam(settings.project_runtime_user)
+        os.chown(root, account.pw_uid, account.pw_gid)
+        owner = root.stat()
+    if owner.st_uid == 0:
+        raise ValueError("Minecraft installer must not run as root")
+    await asyncio.to_thread(_minecraft_storage_owner, root, owner.st_uid, owner.st_gid)
     installer = safe_child(root, installer_jar)
     if automatic:
         assert minecraft_version is not None and forge_version is not None
@@ -2160,6 +2193,7 @@ async def install_minecraft(
                 str(settings.docker_binary),
                 "run",
                 "--rm",
+                *(["--name", f"np-mc-build-{job_id}"] if job_id else []),
                 "--security-opt",
                 "no-new-privileges:true",
                 "--cap-drop",
@@ -2172,7 +2206,7 @@ async def install_minecraft(
                 f"{root}:/server",
                 "--workdir",
                 "/server",
-                f"eclipse-temurin:{java_version}-jdk",
+                java_image(java_version, jdk=True),
                 "java",
                 "-jar",
                 installer_jar,
@@ -2213,6 +2247,11 @@ async def install_minecraft(
             "log": (str(result["stdout"]) + "\n" + str(result["stderr"]))[-32768:],
         }
     finally:
+        if job_id:
+            with contextlib.suppress(Exception):
+                await run_command(
+                    [str(settings.docker_binary), "rm", "--force", f"np-mc-build-{job_id}"]
+                )
         if automatic:
             installer.unlink(missing_ok=True)
 
@@ -2233,6 +2272,9 @@ async def start_minecraft(
     rcon_password: str | None = None,
     cpu_cores: float | None = None,
     memory_mb: int | None = None,
+    wait_ready: bool = False,
+    game_bind_host: str = "0.0.0.0",  # noqa: S104 - public game listener is intentional
+    server_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Start a hardened Minecraft Forge container with validated settings."""
     if not PROJECT_ID_PATTERN.fullmatch(project_id):
@@ -2251,20 +2293,42 @@ async def start_minecraft(
         raise ValueError("Minecraft EULA must be accepted")
     if not 1024 <= game_port <= 65535:
         raise ValueError("Invalid game port")
+    if game_bind_host not in {"0.0.0.0", "127.0.0.1"}:  # noqa: S104
+        raise ValueError("Invalid game bind address")
     if rcon_enabled and (not 1024 <= rcon_port <= 65535 or not 1024 <= rcon_host_port <= 65535):
         raise ValueError("Invalid RCON port")
-    root = safe_child(settings.storage_root, f"minecraft/{project_id}")
+    root = project_root(project_id)
     root.mkdir(parents=True, exist_ok=True)
     if launch_mode == "jar":
-        jar = safe_child(root, server_jar)
+        jar = minecraft_child(root, server_jar)
         if not jar.is_file() or jar.is_symlink():
             raise ValueError("Minecraft server JAR does not exist")
+        if server_sha256 is not None:
+            from system_agent.minecraft import validate_jar
+
+            if (
+                not re.fullmatch(r"[a-f0-9]{64}", server_sha256)
+                or await asyncio.to_thread(validate_jar, jar) != server_sha256
+            ):
+                raise ValueError("Minecraft launcher differs from its installed artifact")
     else:
-        script = safe_child(root, "run.sh")
+        script = minecraft_child(root, "run.sh")
         if not script.is_file() or script.is_symlink():
             raise ValueError("Forge run.sh launcher does not exist")
         _write_forge_jvm_arguments(root, xms=xms, xmx=xmx)
-    (root / "eula.txt").write_text("eula=true\n", encoding="utf-8")
+    if rcon_enabled and game_port == rcon_port:
+        raise ValueError("Game and RCON container ports must differ")
+    if rcon_enabled and game_port == rcon_host_port:
+        raise ValueError("Game and RCON host ports must differ")
+    if memory_mb is not None and memory_mb < maximum + 512:
+        raise ValueError("Minecraft memory limit must be at least Xmx + 512 MiB")
+    memory_mb = memory_mb if memory_mb is not None else maximum + 1024
+    cpu_cores = cpu_cores if cpu_cores is not None else 2
+    minecraft_child(root, "server.properties")
+    eula = minecraft_child(root, "eula.txt")
+    if eula.exists() and not eula.is_file():
+        raise ValueError("Minecraft EULA must be a regular file")
+    eula.write_text("eula=true\n", encoding="utf-8")
     _write_server_properties(
         root,
         game_port=game_port,
@@ -2282,12 +2346,50 @@ async def start_minecraft(
         stderr=asyncio.subprocess.DEVNULL,
     )
     if await inspect.wait() == 0:
-        await run_command([str(settings.docker_binary), "rm", "--force", container])
+        if await _minecraft_container_running(project_id):
+            raise ValueError("Minecraft server is already running; stop it first")
+        await run_command([str(settings.docker_binary), "rm", container])
+    for port, host in [
+        (game_port, game_bind_host),
+        *([(rcon_host_port, "127.0.0.1")] if rcon_enabled else []),
+    ]:
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, port))
+            except OSError as exc:
+                raise ValueError("Minecraft host port is already in use") from exc
+    owner = root.stat()
+    uid = owner.st_uid
+    gid = owner.st_gid
+    if uid == 0:
+        account = pwd.getpwnam(settings.project_runtime_user)
+        uid, gid = account.pw_uid, account.pw_gid
+        os.chown(root, uid, gid)
+    if uid == 0:
+        raise ValueError("Minecraft runtime must not run as root")
+    await asyncio.to_thread(_minecraft_storage_owner, root, uid, gid)
+    for file in (root / "eula.txt", root / "server.properties"):
+        os.chown(file, uid, gid)
     arguments = [
         str(settings.docker_binary),
         "run",
         "--detach",
         "--interactive",
+        "--user",
+        f"{uid}:{gid}",
+        "--env",
+        "HOME=/tmp",
+        "--pids-limit",
+        "512",
+        "--log-driver",
+        "json-file",
+        "--log-opt",
+        "max-size=10m",
+        "--log-opt",
+        "max-file=3",
+        "--stop-timeout",
+        "120",
         "--name",
         container,
         "--restart",
@@ -2299,7 +2401,9 @@ async def start_minecraft(
         "--label",
         f"io.nectarine.project={project_id}",
         "--publish",
-        f"{game_port}:{game_port}/tcp",
+        f"{game_port}:{game_port}/tcp"
+        if game_bind_host == "0.0.0.0"  # noqa: S104
+        else f"{game_bind_host}:{game_port}:{game_port}/tcp",
         *_docker_resource_arguments(cpu_cores=cpu_cores, memory_mb=memory_mb),
         "--volume",
         f"{root}:/server",
@@ -2308,7 +2412,7 @@ async def start_minecraft(
     ]
     if rcon_enabled:
         arguments.extend(["--publish", f"127.0.0.1:{rcon_host_port}:{rcon_port}/tcp"])
-    arguments.append(f"eclipse-temurin:{java_version}-jre")
+    arguments.append(java_image(java_version))
     if launch_mode == "forge_script":
         arguments.extend(["sh", "./run.sh", "nogui"])
     else:
@@ -2323,7 +2427,45 @@ async def start_minecraft(
             ]
         )
     result = await run_command(arguments, command_timeout=180)
+    if wait_ready:
+        from system_agent.minecraft import server_status
+
+        deadline = asyncio.get_running_loop().time() + 180
+        while asyncio.get_running_loop().time() < deadline:
+            if not await _minecraft_container_running(project_id):
+                raise CommandError("Minecraft exited before becoming ready")
+            if (await server_status(project_id, game_port)).get("available"):
+                if rcon_enabled and rcon_password:
+                    try:
+                        await asyncio.to_thread(
+                            _rcon_request, rcon_host_port, rcon_password, "list"
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        await asyncio.sleep(2)
+                        continue
+                break
+            await asyncio.sleep(2)
+        else:
+            raise CommandError("Minecraft startup readiness timed out")
     return {"container": container, "container_id": result["stdout"].strip()}
+
+
+def _minecraft_storage_owner(root: Path, uid: int, gid: int) -> None:
+    """Migrate root-owned legacy files without following links outside storage."""
+    count = 0
+    for directory, folders, files in os.walk(root, followlinks=False):
+        for name in [*folders, *files]:
+            count += 1
+            if count > 100_000:
+                raise ValueError("Minecraft storage exceeds the file limit")
+            path = Path(directory) / name
+            metadata = path.lstat()
+            if path.is_symlink():
+                raise ValueError("Minecraft storage must not contain symlinks")
+            if path.is_file() and metadata.st_nlink > 1:
+                raise ValueError("Minecraft storage must not contain hard links")
+            if metadata.st_uid == 0:
+                os.chown(path, uid, gid, follow_symlinks=False)
 
 
 def _rcon_request(port: int, password: str, command: str) -> str:
@@ -2334,7 +2476,9 @@ def _rcon_request(port: int, password: str, command: str) -> str:
         return struct.pack("<i", len(payload)) + payload
 
     def receive(connection: socket.socket) -> tuple[int, int, str]:
-        length_data = connection.recv(4)
+        from system_agent.minecraft import _read_exact
+
+        length_data = _read_exact(connection, 4)
         if len(length_data) != 4:
             raise CommandError("Incomplete RCON response")
         length = struct.unpack("<i", length_data)[0]
@@ -2350,6 +2494,8 @@ def _rcon_request(port: int, password: str, command: str) -> str:
         return request_id, packet_type, payload[8:-2].decode(errors="replace")
 
     with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        if command == "save-all flush":
+            connection.settimeout(120)
         connection.sendall(packet(1, 3, password))
         auth_id, _, _ = receive(connection)
         if auth_id == -1:
@@ -2373,7 +2519,11 @@ async def minecraft_command(
         raise ValueError("Invalid project ID")
     if not 1024 <= rcon_host_port <= 65535:
         raise ValueError("Invalid RCON port")
-    if not command.strip() or len(command) > 1024 or "\x00" in command:
+    if (
+        not command.strip()
+        or len(command) > 1024
+        or any(ord(character) < 32 for character in command)
+    ):
         raise ValueError("Invalid Minecraft command")
     output = await asyncio.to_thread(
         _rcon_request,
@@ -2397,8 +2547,10 @@ async def _minecraft_container_running(project_id: str) -> bool:
                 f"vps-project-{project_id}",
             ]
         )
-    except CommandError:
-        return False
+    except CommandError as exc:
+        if "no such" in str(exc).lower():
+            return False
+        raise
     return str(result["stdout"]).strip().lower() == "true"
 
 
@@ -2673,7 +2825,7 @@ async def cleanup_project(
     if runtime_type in {"systemd", "pm2"}:
         runtime_removed["removed"] = await _remove_project_service(project_id)
         runtime_removed["user_removed"] = await _remove_project_runtime_user(project_id)
-    elif runtime_type in {"docker", "minecraft_forge"}:
+    elif runtime_type in {"docker", *MINECRAFT_TYPES}:
         runtime_removed["removed"] = await _remove_project_container(project_id)
         runtime_removed["images"] = await _remove_project_images(project_id)
     elif runtime_type == "docker_compose":
@@ -2957,7 +3109,7 @@ async def project_metrics(
         raise ValueError("Invalid project ID")
     if runtime_type not in RUNTIME_TYPES:
         raise ValueError("Unsupported project runtime")
-    if runtime_type in {"docker", "minecraft_forge"}:
+    if runtime_type in {"docker", *MINECRAFT_TYPES}:
         metrics = await _docker_container_stats([f"vps-project-{project_id}"])
     elif runtime_type == "docker_compose":
         metrics = await _docker_container_stats(await _compose_project_containers(project_id))

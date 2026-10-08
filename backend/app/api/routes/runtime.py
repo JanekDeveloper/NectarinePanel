@@ -21,7 +21,7 @@ from app.api.dependencies import AppSettings, CurrentUser, DbSession
 from app.core.config import Settings, get_settings
 from app.core.security import decode_access_token
 from app.db.session import SessionFactory
-from app.models.entities import Project, User
+from app.models.entities import MINECRAFT_TYPES, Project, User
 from app.schemas.common import MessageResponse
 from app.schemas.runtime import (
     ConsoleCommand,
@@ -31,7 +31,8 @@ from app.schemas.runtime import (
 )
 from app.services.agent import AgentClient
 from app.services.audit import write_audit_log
-from app.services.minecraft import minecraft_rcon_password, start_minecraft_runtime
+from app.services.minecraft import control_minecraft_runtime, minecraft_rcon_password
+from app.services.minecraft_operations import assert_minecraft_idle, minecraft_action
 from app.services.permissions import require_project_permission
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["runtime"])
@@ -43,7 +44,7 @@ TERMINAL_RUNTIME_TYPES = {
     "docker_compose",
     "systemd",
     "pm2",
-    "minecraft_forge",
+    *MINECRAFT_TYPES,
 }
 
 
@@ -147,7 +148,7 @@ async def _runtime_project_or_409(project_id: str, session: DbSession) -> Projec
         "docker_compose",
         "systemd",
         "pm2",
-        "minecraft_forge",
+        *MINECRAFT_TYPES,
     }:
         raise HTTPException(
             status_code=409,
@@ -168,8 +169,9 @@ async def runtime_action(
     await require_project_permission(session, user, project_id, "runtime:control")
     project = await _runtime_project_or_409(project_id, session)
     try:
-        if project.runtime_type == "minecraft_forge" and action == RuntimeAction.START:
-            await start_minecraft_runtime(project, session, settings)
+        if project.runtime_type in MINECRAFT_TYPES:
+            async with minecraft_action(session, project, str(action)):
+                await control_minecraft_runtime(project, str(action), session, settings)
         elif project.runtime_type in {"systemd", "pm2"}:
             await AgentClient(settings).execute(
                 "manage_service",
@@ -194,6 +196,8 @@ async def runtime_action(
                 {"container": _container_name(project.id), "action": action},
                 request_timeout=150,
             )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Runtime operation failed") from exc
     project.status = "stopped" if action == RuntimeAction.STOP else "running"
@@ -270,8 +274,9 @@ async def _execute_console_command(
     settings: Settings,
 ) -> ConsoleResult:
     """Execute one constrained runtime command and persist its audit result."""
+    await assert_minecraft_idle(session, project)
     try:
-        if project.runtime_type == "minecraft_forge":
+        if project.runtime_type in MINECRAFT_TYPES:
             password = await minecraft_rcon_password(session, project.id, settings)
             result = await AgentClient(settings).execute(
                 "minecraft_command",
@@ -535,7 +540,7 @@ async def interactive_project_terminal(
         descriptor = _terminal_descriptor(project, settings)
         runtime_type = project.runtime_type
     await websocket.accept()
-    if runtime_type == "minecraft_forge":
+    if runtime_type in MINECRAFT_TYPES:
         started_at = time.monotonic()
         await _audit_terminal_event(
             action="console.terminal_opened",
@@ -655,7 +660,7 @@ async def live_project_console(
             "docker_compose",
             "systemd",
             "pm2",
-            "minecraft_forge",
+            *MINECRAFT_TYPES,
         }:
             await websocket.close(code=4404, reason="Project not found")
             return
@@ -740,7 +745,7 @@ async def live_project_logs(
             "docker_compose",
             "systemd",
             "pm2",
-            "minecraft_forge",
+            *MINECRAFT_TYPES,
         }:
             await websocket.close(code=4404, reason="Project not found")
             return

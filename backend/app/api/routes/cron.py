@@ -7,12 +7,12 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
-from app.models.entities import CronJob, Project
+from app.models.entities import MINECRAFT_TYPES, CronJob, Project
 from app.schemas.cron import CronJobCreate, CronJobResponse
 from app.services.audit import write_audit_log
 
 router = APIRouter(prefix="/projects/{project_id}/cron", tags=["cron"])
-CRON_RUNTIME_TYPES = {"docker", "docker_compose", "systemd", "pm2", "minecraft_forge"}
+CRON_RUNTIME_TYPES = {"docker", "docker_compose", "systemd", "pm2", *MINECRAFT_TYPES}
 
 
 @router.get("", response_model=list[CronJobResponse])

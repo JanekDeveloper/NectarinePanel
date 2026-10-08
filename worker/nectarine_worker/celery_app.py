@@ -8,7 +8,7 @@ celery_app = Celery(
     "nectarine_worker",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["nectarine_worker.tasks"],
+    include=["nectarine_worker.tasks", "nectarine_worker.minecraft"],
 )
 celery_app.conf.update(
     task_serializer="json",
@@ -21,6 +21,7 @@ celery_app.conf.update(
     task_soft_time_limit=3300,
     worker_prefetch_multiplier=1,
     beat_schedule={
+        "recover-minecraft": {"task": "minecraft.recover", "schedule": 60.0},
         "collect-host-metrics": {
             "task": "monitoring.collect",
             "schedule": 60.0,
