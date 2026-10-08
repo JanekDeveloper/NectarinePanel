@@ -150,6 +150,10 @@ fi
 [[ "$ADMIN_USERNAME" =~ ^[a-zA-Z0-9_.-]{3,64}$ ]] || fail "Invalid admin username"
 [[ "$STORAGE_ROOT" =~ ^/[A-Za-z0-9._/-]+$ ]] \
     || fail "Storage root must be a safe absolute path"
+# shellcheck source=installer/lib/storage.sh
+source "$SCRIPT_DIR/lib/storage.sh"
+STORAGE_ROOT="$(validate_storage_root "$STORAGE_ROOT")" \
+    || fail "Storage root must be outside home and private temporary directories; use /srv/vps-panel or /opt/NectStorage"
 if ! [[ "$MAX_UPLOAD_MB" =~ ^[0-9]+$ ]] || ! ((MAX_UPLOAD_MB >= 1 && MAX_UPLOAD_MB <= 4096)); then
     fail "Upload limit must be between 1 and 4096 MiB"
 fi

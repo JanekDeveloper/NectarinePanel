@@ -3,7 +3,59 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/root/NectStorage",
+        "/home/panel/data",
+        "/tmp/data",  # noqa: S108 - rejected input, never used for file creation
+        "/var/tmp/data",  # noqa: S108 - rejected input, never used for file creation
+        "/run/user/1000/data",
+        "/srv/../root/data",
+        "relative/data",
+    ],
+)
+def test_storage_validation_rejects_service_inaccessible_paths(path: str) -> None:
+    """Systemd-isolated home and temporary storage cannot pass installer preflight."""
+    result = subprocess.run(  # noqa: S603 - fixed shell helper and positional test data
+        [
+            "/usr/bin/bash",
+            "-c",
+            'source "$1"; validate_storage_root "$2"',
+            "storage-test",
+            str(ROOT / "installer/lib/storage.sh"),
+            path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize("path", ["/srv/vps-panel", "/opt/NectStorage", "/var/lib/nectarine"])
+def test_storage_validation_accepts_persistent_paths(path: str) -> None:
+    """Valid shared storage remains available without creating or changing directories."""
+    result = subprocess.run(  # noqa: S603 - fixed shell helper and positional test data
+        [
+            "/usr/bin/bash",
+            "-c",
+            'source "$1"; validate_storage_root "$2"',
+            "storage-test",
+            str(ROOT / "installer/lib/storage.sh"),
+            path,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == path
 
 
 def test_shell_scripts_parse() -> None:
@@ -38,6 +90,8 @@ def test_installer_dry_run() -> None:
             "--adminer-port",
             "18081",
             "--skip-ssl",
+            "--storage-root",
+            "/srv/vps-panel",
         ],
         check=True,
     )

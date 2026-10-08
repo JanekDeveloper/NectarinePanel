@@ -66,6 +66,11 @@ fi
 
 [[ "$(id -u)" -eq 0 ]] || fail "Run the updater as root"
 [[ -f "$CONFIG_DIR/panel.env" && -d "$INSTALL_DIR" ]] || fail "Panel is not installed"
+# shellcheck source=installer/lib/storage.sh
+source "$SCRIPT_DIR/lib/storage.sh"
+storage_path="$(sed -n 's/^STORAGE_ROOT=//p' "$CONFIG_DIR/panel.env" | tail -n 1)"
+validate_storage_root "$storage_path" >/dev/null \
+    || fail "Storage root is hidden from panel services; move storage outside home and private temporary directories first"
 exec 9>"$LOCK_FILE"
 flock -n 9 || fail "Another installer process is running"
 

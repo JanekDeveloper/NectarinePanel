@@ -34,7 +34,8 @@ lint-frontend:
 	cd frontend && npm run lint && npm run typecheck
 
 lint-shell:
-	find installer scripts -type f -name '*.sh' -exec bash -n {} +
+	find installer -type f -name '*.sh' -exec bash -n {} +
+	[ ! -d scripts ] || find scripts -type f -name '*.sh' -exec bash -n {} +
 	find installer/helpers -type f -exec sh -n {} +
 
 format:
